@@ -1,4 +1,5 @@
 import { traceStorage } from './middleware/correlation';
+import { trace } from '@opentelemetry/api';
 
 type LogLevel = 'info' | 'warn' | 'error' | 'debug';
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -10,6 +11,7 @@ interface LogEntry {
   requestId?: string;
   traceId?: string;
   spanId?: string;
+  ledgerSequence?: number;
   [key: string]: unknown;
 }
 
@@ -45,14 +47,20 @@ function log(level: LogLevel, message: string | Record<string, unknown>, meta?: 
     typeof message === 'string' ? toMeta(meta) : toMeta({ ...message, ...toMeta(meta) });
 
   const ctx = traceStorage.getStore();
+  const activeSpanContext = trace.getActiveSpan()?.spanContext();
   const entry: LogEntry = {
     level,
     message: messageText,
     timestamp: new Date().toISOString(),
-    ...(ctx?.requestId ? { requestId: ctx.requestId } : {}),
-    ...(ctx?.traceId ? { traceId: ctx.traceId } : {}),
-    ...(ctx?.spanId ? { spanId: ctx.spanId } : {}),
     ...metaObj,
+    ...(ctx?.requestId ? { requestId: ctx.requestId } : {}),
+    ...(activeSpanContext?.traceId || ctx?.traceId
+      ? { traceId: activeSpanContext?.traceId || ctx?.traceId }
+      : {}),
+    ...(activeSpanContext?.spanId || ctx?.spanId
+      ? { spanId: activeSpanContext?.spanId || ctx?.spanId }
+      : {}),
+    ...(ctx?.ledgerSequence !== undefined ? { ledgerSequence: ctx.ledgerSequence } : {}),
   };
 
   const line = IS_PROD ? JSON.stringify(entry) : prettyPrint(entry);

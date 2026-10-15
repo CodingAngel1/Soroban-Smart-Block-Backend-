@@ -242,7 +242,10 @@ export async function processLedgerRange(
   end: number,
   opts: { force?: boolean } = {},
 ) {
-  logger.info(`Indexing ledgers ${start} → ${end}`);
+  logger.info(`Indexing ledgers ${start} → ${end}`, {
+    ledgerSequence: start,
+    ledgerRangeEnd: end,
+  });
 
   // Stage lag metrics update
   try {
@@ -280,6 +283,7 @@ export async function processLedgerRange(
     if (prevLedger && prevLedger.hash !== ledgerMeta.previousLedgerHash) {
       logger.warn(
         `🚨 REORG DETECTED at ledger ${seq}! Local hash ${prevLedger.hash} vs network expected ${ledgerMeta.previousLedgerHash}`,
+        { ledgerSequence: seq },
       );
 
       const maxDepth = config.indexerReorgProtectionDepth || 100;
@@ -303,7 +307,7 @@ export async function processLedgerRange(
         } catch (e) {
           logger.error(
             `Failed to fetch remote metadata for deep reorg check at ledger ${checkSeq}`,
-            e,
+            { ledgerSequence: checkSeq, error: e },
           );
           break;
         }
@@ -311,7 +315,9 @@ export async function processLedgerRange(
         if (localCheckLedger.hash === remoteCheckMeta.hash) {
           commonAncestorFound = true;
           commonAncestorSeq = checkSeq;
-          logger.info(`Found common ancestor at ledger sequence ${checkSeq} (depth: ${depth})`);
+          logger.info(`Found common ancestor at ledger sequence ${checkSeq} (depth: ${depth})`, {
+            ledgerSequence: checkSeq,
+          });
           break;
         } else {
           rolledBackSequences.push(checkSeq);
@@ -321,6 +327,7 @@ export async function processLedgerRange(
       if (!commonAncestorFound) {
         logger.error(
           `🚨 DEEP REORG EXCEEDS SAFETY THRESHOLD (${maxDepth} ledgers). Performing safety rollback for ${rolledBackSequences.length} ledgers.`,
+          { ledgerSequence: seq },
         );
       }
 
