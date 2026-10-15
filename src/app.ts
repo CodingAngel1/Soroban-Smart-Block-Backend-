@@ -44,6 +44,7 @@ import { auditLogMiddleware } from './middleware/auditLog';
 import { asyncHandler } from './middleware/asyncHandler';
 import { rejectUntrustedForwardedHeaders } from './middleware/proxyTrust';
 import { getHealthStatus, getLivenessStatus, getReadinessStatus } from './health';
+import { createDependencyHealthHandler } from './health-routes';
 import { getP2pStatusSnapshot, resolveLedgerLocation } from './p2p';
 import { getIndexerStatus } from './indexer-state';
 import { statusRouter } from './api/status';
@@ -285,27 +286,11 @@ export function createApp(options: AppOptions): express.Express {
     }),
   );
 
-  // Detailed health check (Issue #923) with live probes
-  app.get(
-    '/health/detailed',
-    asyncHandler(async (_req, res) => {
-      if (isShuttingDown()) {
-        return res
-          .status(503)
-          .json({ status: 'shutting_down', timestamp: new Date().toISOString() });
-      }
-
-      const healthStatus = await getHealthStatus(true);
-
-      // Return 503 if any dependency is unhealthy, 200 otherwise
-      const statusCode = healthStatus.status === 'unhealthy' ? 503 : 200;
-
-      res.status(statusCode).json({
-        ...healthStatus,
-        network: config.stellarNetwork,
-      });
-    }),
-  );
+  // Live dependency health is separate from process liveness and traffic
+  // readiness. Keep /health/detailed as a compatibility alias.
+  const dependencyHealthHandler = createDependencyHealthHandler(isShuttingDown);
+  app.get('/health/detailed', dependencyHealthHandler);
+  app.get('/health/dependencies', dependencyHealthHandler);
 
   // Public Status Page & Uptime History API (Issue #1031)
   app.use('/status', statusRouter);
