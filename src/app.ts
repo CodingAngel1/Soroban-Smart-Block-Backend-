@@ -189,7 +189,8 @@ export function createApp(options: AppOptions): express.Express {
     cors({
       origin: corsOrigin,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Api-Key', 'X-Request-Id'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Api-Key', 'X-Request-Id', 'X-Network'],
+      exposedHeaders: ['X-Network'],
       credentials: corsCredentials,
     }),
   );
