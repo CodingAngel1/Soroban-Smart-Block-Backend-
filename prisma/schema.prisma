@@ -550,14 +550,16 @@ model LedgerGap {
 }
 
 /// Persists per-batch progress for parallel catch-up workers (issue #881).
-/// Each row records one [rangeStart, rangeEnd] chunk assigned to a worker.
+/// Each row records one stable, network-scoped ledger window.
 /// On crash-restart the indexer resumes from `lastCommittedLedger` rather
 /// than re-fetching from `rangeStart`.
 ///
-/// Composite unique key: (rangeStart, rangeEnd) so concurrent workers
+/// Composite unique key: (network, rangeStart, rangeEnd) so concurrent workers
 /// targeting the same chunk upsert rather than create duplicate rows.
 model CatchUpCheckpoint {
   id                  String   @map("id") @id @default(cuid())
+  /// Network whose ledgers this checkpoint covers
+  network             String   @map("network") @default("mainnet")
   /// First ledger of the worker's assigned chunk
   rangeStart          Int      @map("range_start")
   /// Last ledger of the worker's assigned chunk
@@ -571,7 +573,7 @@ model CatchUpCheckpoint {
   updatedAt           DateTime @map("updated_at") @updatedAt
   createdAt           DateTime @map("created_at") @default(now())
 
-  @@unique([rangeStart, rangeEnd])
+  @@unique([network, rangeStart, rangeEnd])
   @@index([completed])
   @@map("_catch_up_checkpoints")
 }
