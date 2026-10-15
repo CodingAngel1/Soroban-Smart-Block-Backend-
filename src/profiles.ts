@@ -87,6 +87,12 @@ const PROFILES: Record<NetworkName, NetworkProfile> = {
   },
 };
 
+const NETWORK_PASSPHRASES: Record<NetworkName, string> = {
+  testnet: 'Test SDF Network ; September 2015',
+  mainnet: 'Public Global Stellar Network ; September 2015',
+  devnet: 'Standalone Network ; February 2017',
+};
+
 // ─── Profile validation ───────────────────────────────────────────────────────
 
 function isHttpUrl(s: string): boolean {
@@ -124,6 +130,11 @@ export function validateProfile(profile: NetworkProfile): void {
   if (!networkPassphrase) {
     throw new Error(
       `[${name}] networkPassphrase is required. Set ${name.toUpperCase()}_PASSPHRASE.`,
+    );
+  }
+  if (networkPassphrase !== NETWORK_PASSPHRASES[name]) {
+    throw new Error(
+      `[${name}] networkPassphrase does not match the canonical ${name} network passphrase.`,
     );
   }
 

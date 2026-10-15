@@ -2,6 +2,7 @@ import { Registry, Counter, Histogram, Gauge, collectDefaultMetrics } from 'prom
 import { metrics as otelMetrics } from '@opentelemetry/api';
 
 export const registry = new Registry();
+const gasFeeAlertMeter = otelMetrics.getMeter('soroban-gas-fee-alerts');
 
 // Collect default Node.js metrics (CPU, memory, event loop, etc.)
 collectDefaultMetrics({ register: registry });
@@ -339,8 +340,15 @@ export const indexerErrorRetriesTotal = new Counter({
 
 export const indexerErrorDlqTotal = new Counter({
   name: 'indexer_error_dlq_total',
-  help: 'Total number of items dead-lettered by reason',
-  labelNames: ['reason'],
+  help: 'Total number of items dead-lettered by network and reason',
+  labelNames: ['network', 'reason'],
+  registers: [registry],
+});
+
+export const indexerErrorDlqOldestAgeSeconds = new Gauge({
+  name: 'indexer_error_dlq_oldest_age_seconds',
+  help: 'Age in seconds of the oldest item currently in the dead-letter queue',
+  labelNames: ['network'],
   registers: [registry],
 });
 

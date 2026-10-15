@@ -43,6 +43,7 @@ import { metricsAuth, metricsRateLimiter } from './middleware/metricsAuth';
 import { auditLogMiddleware } from './middleware/auditLog';
 import { asyncHandler } from './middleware/asyncHandler';
 import { rejectUntrustedForwardedHeaders } from './middleware/proxyTrust';
+import { createMaintenanceModeMiddleware } from './middleware/maintenanceMode';
 import { getHealthStatus, getLivenessStatus, getReadinessStatus } from './health';
 import { getP2pStatusSnapshot, resolveLedgerLocation } from './p2p';
 import { getIndexerStatus } from './indexer-state';
@@ -205,6 +206,7 @@ export function createApp(options: AppOptions): express.Express {
   app.use(requestSizeGuard(1_048_576)); // 1 MB
 
   app.use(express.json({ limit: '1mb' }));
+  app.use(createMaintenanceModeMiddleware(config.apiMaintenanceMode, config.stellarNetwork));
   app.use(networkRouter);
 
   // Request context FIRST (generates requestId + start time for correlation)
