@@ -6,6 +6,11 @@ release. The restore target is not the source database. The job fails closed
 when the backup, archive validation, restore, or restored-database connection
 check fails, and its temporary dump is removed when the job exits.
 
+This logical backup/restore check does not demonstrate point-in-time recovery
+or satisfy the service RPO by itself. See the
+[disaster recovery objectives and exercise](disaster-recovery.md) for RPO/RTO
+targets and the separate PITR validation procedure.
+
 ## GitHub configuration
 
 Configure a `DATABASE_URL` secret on the `staging` GitHub Environment. It must
