@@ -12,6 +12,74 @@ export type AnonymitySetSnapshot = {
   timestamp?: string;
 };
 
+export type ComposabilityExploit = {
+  discoveredAt?: string;
+  id?: string;
+  patternCategory?: string;
+  severity?: string;
+  title?: string;
+};
+
+export type ComposabilityFuzzCampaign = {
+  completedAt?: string;
+  contractAddress?: string;
+  coveragePct?: number;
+  findings?: Array<Record<string, unknown>>;
+  id?: string;
+  status?: string;
+  totalCases?: number;
+  unsafeFound?: number;
+};
+
+export type ComposabilityStaticAnalysis = {
+  analysisVersion?: string;
+  analyzedAt?: string;
+  contractAddress?: string;
+  hasUnboundedRecursion?: boolean;
+  id?: string;
+  maxCallDepth?: number;
+};
+
+export type ComposabilityVerification = {
+  atomicity?: boolean;
+  createdAt?: string;
+  id?: string;
+  reentrancyFree?: boolean;
+  totalScore?: number;
+  txHash?: string;
+  verified?: boolean;
+};
+
+export type ComposedTransaction = {
+  analysisStatus?: string;
+  createdAt?: string;
+  id?: string;
+  ledgerSeq?: number;
+  patterns?: Array<CompositionPattern>;
+  riskLevel?: string;
+  safetyScore?: number;
+  txHash?: string;
+};
+
+export type CompositionAlert = {
+  contractAddress?: string;
+  createdAt?: string;
+  id?: string;
+  patternId?: string;
+  severity?: string;
+};
+
+export type CompositionPattern = {
+  category?: string;
+  createdAt?: string;
+  id?: string;
+  instances?: Array<Record<string, unknown>>;
+  mitigationGuide?: string | null;
+  name?: string;
+  riskRating?: string;
+  updatedAt?: string;
+};
+
 export type Contract = {
   /** ABI-like metadata: functions, events, types */
   abi?: Record<string, unknown> | null;
@@ -30,6 +98,17 @@ export type Contract = {
   updatedAt?: string;
   /** Fuzzy hash of compiled Wasm bytecode for similarity detection */
   wasmHash?: string | null;
+};
+
+export type ContractComposabilityProfile = {
+  compositionCount?: number;
+  contractAddress?: string;
+  id?: string;
+  lastAnalyzed?: string;
+  riskIncidents?: number;
+  safetyScoreAvg?: number;
+  uniqueCallees?: number;
+  uniqueCallers?: number;
 };
 
 export type CronExecution = {
@@ -76,6 +155,18 @@ export type DeAnonymizationFinding = {
   targetAddress?: string;
   /** Heuristic used: timing | amount_correlation | taint | common_input */
   technique?: string;
+};
+
+export type EcosystemComposabilityIndex = {
+  avgSafetyScore?: number;
+  compositionDiversity?: number;
+  computedAt?: string;
+  exploitIncidentRate?: number;
+  id?: string;
+  protocolInterconnectivity?: number;
+  score?: number;
+  totalComposedTx?: number;
+  totalContracts?: number;
 };
 
 export type Error = {
@@ -433,7 +524,7 @@ export type ReputationDisputeRecord = {
   createdAt?: string;
   evidenceHash?: string | null;
   id?: string;
-  outcome?: "upheld" | "rejected" | "timeout" | null;
+  outcome?: "upheld" | "rejected" | "timeout" | null | null;
   profileId?: string;
   quorumVotes?: number | null;
   resolvedAt?: string | null;
@@ -982,7 +1073,7 @@ export type ZodValidationError = {
     code?: string;
     expected?: string;
     message?: string;
-    path?: Array<string>;
+    path?: Array<(string) | (number)>;
     received?: string;
   }>;
 };

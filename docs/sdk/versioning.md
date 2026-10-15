@@ -14,13 +14,13 @@ artefact differs (drift).
 
 `packages/client/api-surface.json` is compared with the base branch:
 
-| Change                                                        | Class    | Required bump |
-| ------------------------------------------------------------- | -------- | ------------- |
-| Operation removed, method/path changed                        | breaking | major         |
-| Parameter removed, retyped, made required, enum value removed | breaking | major         |
-| New required parameter, request body became required          | breaking | major         |
-| New operation, new optional parameter, operation deprecated   | additive | minor         |
-| Docs/descriptions only                                        | none     | patch/none    |
+| Change                                                             | Class    | Required bump |
+| ------------------------------------------------------------------ | -------- | ------------- |
+| Operation removed, method/path changed                             | breaking | major         |
+| Parameter removed, retyped, made required, enum value removed      | breaking | major         |
+| New required parameter, request body became required               | breaking | major         |
+| New operation/schema, new optional parameter, operation deprecated | additive | minor         |
+| Docs/descriptions only                                             | none     | patch/none    |
 
 Every SDK package version is checked independently.
 

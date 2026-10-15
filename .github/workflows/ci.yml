@@ -164,6 +164,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate OpenAPI request and response examples
+        run: npm run openapi:check-examples
+
       - name: Generated SDKs match the OpenAPI spec (drift gate)
         run: npm run sdk:check
 

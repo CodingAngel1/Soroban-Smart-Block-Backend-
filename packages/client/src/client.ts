@@ -30,7 +30,7 @@ import {
 const OPS: Readonly<Record<string, OperationSpec>> = OPERATIONS;
 import { SorobanFeed } from './feed';
 
-export const SDK_VERSION = '1.1.0';
+export const SDK_VERSION = '1.2.0';
 export const DEFAULT_BASE_URL = 'https://api.soroban.network/api/v1';
 
 export interface SorobanClientOptions {
