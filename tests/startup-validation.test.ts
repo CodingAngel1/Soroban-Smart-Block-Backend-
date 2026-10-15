@@ -168,6 +168,7 @@ describe('startup validation — validateProfile helper', () => {
       name: 'mainnet' as const,
       databaseUrl: '',
       rpcUrl: 'https://ok.example.com',
+      rpcFallbackUrls: [],
       rpcWsUrl: 'wss://ok.example.com',
       horizonUrl: 'https://horizon.stellar.org',
       readReplicaUrl: '',

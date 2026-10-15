@@ -259,49 +259,6 @@ export const replicaLagCheckErrors = new Counter({
   registers: [registry],
 });
 
-// ── Outbound RPC / Horizon calls (#910) ──────────────────────────────────────
-// The indexer's primary external dependency is the Stellar RPC node (and
-// Horizon as a REST fallback). These metrics track outbound call latency,
-// error rates, and retry activity so RPC degradation is distinguishable
-// from DB write speed, and retry storms (each retry = another RPC call,
-// burning quota) are countable.
-export const rpcCallDuration = new Histogram({
-  name: 'rpc_call_duration_seconds',
-  help: 'Duration of outbound Stellar RPC calls in seconds',
-  labelNames: ['operation', 'status'],
-  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
-  registers: [registry],
-});
-
-export const rpcCallErrorsTotal = new Counter({
-  name: 'rpc_call_errors_total',
-  help: 'Total number of outbound Stellar RPC call errors',
-  labelNames: ['operation', 'type'],
-  registers: [registry],
-});
-
-export const rpcCallRetriesTotal = new Counter({
-  name: 'rpc_call_retries_total',
-  help: 'Total number of RPC call retries performed (rate-limit backoff)',
-  labelNames: ['operation'],
-  registers: [registry],
-});
-
-export const horizonCallDuration = new Histogram({
-  name: 'horizon_call_duration_seconds',
-  help: 'Duration of outbound Horizon REST API calls in seconds',
-  labelNames: ['operation', 'status'],
-  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
-  registers: [registry],
-});
-
-export const horizonCallErrorsTotal = new Counter({
-  name: 'horizon_call_errors_total',
-  help: 'Total number of outbound Horizon REST API call errors',
-  labelNames: ['operation', 'type'],
-  registers: [registry],
-});
-
 // ── Background job / cron metrics (#911) ─────────────────────────────────────
 // Recurring jobs (price updates, audit pipeline, key rotation, aggregation
 // snapshots) previously exposed no per-job metrics — job health was only
@@ -378,11 +335,10 @@ export const healthProbeDurationSeconds = new Histogram({
 
 // OTel mirror of probe counters — feeds OTLP exporters (Grafana Cloud, etc.)
 const healthProbeMeter = otelMetrics.getMeter('soroban-health-probes');
-export const healthProbeRequestsOtel = healthProbeMeter.createCounter(
-  'health.probe.requests',
-  { description: 'Total health probe requests by endpoint and outcome' },
-);
-export const healthProbeDurationOtel = healthProbeMeter.createHistogram(
-  'health.probe.duration',
-  { unit: 's', description: 'Health probe response time in seconds' },
-);
+export const healthProbeRequestsOtel = healthProbeMeter.createCounter('health.probe.requests', {
+  description: 'Total health probe requests by endpoint and outcome',
+});
+export const healthProbeDurationOtel = healthProbeMeter.createHistogram('health.probe.duration', {
+  unit: 's',
+  description: 'Health probe response time in seconds',
+});
