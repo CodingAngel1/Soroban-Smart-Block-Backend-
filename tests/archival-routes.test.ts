@@ -24,6 +24,13 @@ vi.mock('../src/db', () => ({
     },
     devApiKey: { findFirst: vi.fn() },
   },
+  prismaBackfill: {
+    transaction: { count: vi.fn() },
+    event: { count: vi.fn() },
+    ledger: { count: vi.fn() },
+    dexPool: { count: vi.fn() },
+    contractResourceMetric: { count: vi.fn() },
+  },
   // archive/archiver.ts uses the bare `prisma` import
   prisma: {
     contractStateChange: {
@@ -83,7 +90,7 @@ import {
   getFullSnapshot,
 } from '../src/archive/query-engine';
 import { captureStateChangesForTransaction } from '../src/archive/archiver';
-import { prismaRead } from '../src/db';
+import { prismaBackfill, prismaRead } from '../src/db';
 import { archiveRouter } from '../src/api/archive';
 import { storageRouter } from '../src/api/storage';
 import backfillRouter from '../src/api/backfill';
@@ -368,6 +375,7 @@ describe('POST /feed/backfill — operator auth', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(VALID_BACKFILL),
     });
+
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body.error).toMatch(/operator token required/i);
@@ -465,6 +473,114 @@ describe('POST /feed/backfill — operator auth', () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/before end time/i);
+  });
+});
+
+describe('POST /feed/backfill/dry-run', () => {
+  it('requires operator authentication without querying counts', async () => {
+    const res = await fetch(`${baseUrl}/feed/backfill/dry-run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(VALID_BACKFILL),
+    });
+
+    expect(res.status).toBe(401);
+    expect(prismaBackfill.transaction.count).not.toHaveBeenCalled();
+    expect(prismaRead.backfillRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('returns a network-scoped estimate without creating or updating a request', async () => {
+    (prismaBackfill.transaction.count as ReturnType<typeof vi.fn>).mockResolvedValue(1234);
+
+    const res = await fetch(`${baseUrl}/feed/backfill/dry-run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-operator-token': 'secret-operator-token',
+      },
+      body: JSON.stringify(VALID_BACKFILL),
+    });
+
+    expect(res.status).toBe(200);
+    const report = await res.json();
+    expect(report).toMatchObject({
+      dryRun: true,
+      network: 'testnet',
+      channelName: 'transactions',
+      recordCount: 1234,
+      estimatedFileSizeBytes: 1234 * 800,
+      mutationsPerformed: false,
+      warnings: [],
+    });
+    expect(prismaBackfill.transaction.count).toHaveBeenCalledWith({
+      where: {
+        network: 'testnet',
+        ledgerCloseTime: {
+          gte: new Date(VALID_BACKFILL.startTime),
+          lte: new Date(VALID_BACKFILL.endTime),
+        },
+      },
+    });
+    expect(prismaRead.backfillRequest.create).not.toHaveBeenCalled();
+    expect(prismaRead.backfillRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid input without querying counts or mutating the database', async () => {
+    const res = await fetch(`${baseUrl}/feed/backfill/dry-run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-operator-token': 'secret-operator-token',
+      },
+      body: JSON.stringify({
+        ...VALID_BACKFILL,
+        startTime: '2024-02-01T00:00:00.000Z',
+        endTime: '2024-01-01T00:00:00.000Z',
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(prismaBackfill.transaction.count).not.toHaveBeenCalled();
+    expect(prismaRead.backfillRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('fails the report when the database count fails and does not create a request', async () => {
+    (prismaBackfill.transaction.count as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('database unavailable'),
+    );
+
+    const res = await fetch(`${baseUrl}/feed/backfill/dry-run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-operator-token': 'secret-operator-token',
+      },
+      body: JSON.stringify(VALID_BACKFILL),
+    });
+
+    expect(res.status).toBe(500);
+    expect(prismaRead.backfillRequest.create).not.toHaveBeenCalled();
+    expect(prismaRead.backfillRequest.update).not.toHaveBeenCalled();
+  });
+
+  it('reports warnings when estimates exceed the configured limits', async () => {
+    (prismaBackfill.transaction.count as ReturnType<typeof vi.fn>).mockResolvedValue(10_000_001);
+
+    const res = await fetch(`${baseUrl}/feed/backfill/dry-run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-operator-token': 'secret-operator-token',
+      },
+      body: JSON.stringify(VALID_BACKFILL),
+    });
+
+    expect(res.status).toBe(200);
+    const report = await res.json();
+    expect(report.warnings).toEqual([
+      'Estimated records exceed the 10000000 record limit.',
+      'Estimated file size exceeds the 1073741824 byte limit.',
+    ]);
   });
 });
 
