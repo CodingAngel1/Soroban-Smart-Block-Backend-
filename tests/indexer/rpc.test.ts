@@ -8,6 +8,7 @@ const { sharedMockServer } = vi.hoisted(() => ({
     getLedger: vi.fn(),
   },
 }));
+const { mockAxiosGet } = vi.hoisted(() => ({ mockAxiosGet: vi.fn() }));
 
 vi.mock('@stellar/stellar-sdk', () => {
   function MockServer() {
@@ -21,6 +22,10 @@ vi.mock('../../src/cache', () => ({
   cacheSet: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('axios', () => ({
+  default: { get: mockAxiosGet },
+}));
+
 vi.mock('../../src/config', () => ({
   config: {
     profile: { name: 'devnet' },
@@ -32,6 +37,7 @@ vi.mock('../../src/config', () => ({
 
 import {
   fetchEvents,
+  fetchLedgerMetadata,
   getLatestLedger,
   getTransaction,
   getRpcWebsocketUrl,
@@ -138,6 +144,35 @@ describe('rpc module', () => {
       sharedMockServer.getLatestLedger.mockResolvedValue({ sequence: '12345' });
       const result = await getLatestLedger();
       expect(result).toBe(12345);
+    });
+  });
+
+  describe('fetchLedgerMetadata', () => {
+    it('falls back to RPC when Horizon is unavailable', async () => {
+      mockAxiosGet.mockRejectedValue(new Error('Horizon unavailable'));
+      sharedMockServer.getLedger.mockResolvedValue({
+        id: 'rpc-ledger-hash',
+        prevHash: 'previous-hash',
+        closedAt: '2025-01-01T00:00:00Z',
+        transactionCount: 3,
+      });
+
+      const ledger = await fetchLedgerMetadata(1234);
+
+      expect(ledger).toMatchObject({
+        sequence: 1234,
+        hash: 'rpc-ledger-hash',
+        previousLedgerHash: 'previous-hash',
+        txCount: 3,
+      });
+      expect(sharedMockServer.getLedger).toHaveBeenCalledWith(1234);
+    });
+
+    it('surfaces failure when both Horizon and RPC are unavailable', async () => {
+      mockAxiosGet.mockRejectedValue(new Error('Horizon unavailable'));
+      sharedMockServer.getLedger.mockRejectedValue(new Error('RPC unavailable'));
+
+      await expect(fetchLedgerMetadata(1234)).rejects.toThrow('RPC unavailable');
     });
   });
 

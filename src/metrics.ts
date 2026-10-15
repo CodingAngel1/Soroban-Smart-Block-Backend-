@@ -43,6 +43,7 @@ export const gasFeeAlertApiOperations = new Counter({
   labelNames: ['operation', 'outcome'],
   registers: [registry],
 });
+const gasFeeAlertMeter = otelMetrics.getMeter('soroban-gas-fee-alerts');
 export const gasFeeAlertApiOperationsOtel = gasFeeAlertMeter.createCounter(
   'gas.fee_alert.api.operations',
 );
