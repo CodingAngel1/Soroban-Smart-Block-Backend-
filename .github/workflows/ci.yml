@@ -62,6 +62,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check documented counts and budgets
+        run: npm run docs:check
+
       - name: Enforce per-file TypeScript error budget
         run: npm run typecheck:budget:ci
 
