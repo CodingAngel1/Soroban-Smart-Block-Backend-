@@ -81,7 +81,7 @@ async function findLedgerGaps(
   if (maxLedger <= minLedger) return [];
 
   // Fetch all indexed ledger sequences in range
-  const indexed = await prisma.ledger.findMany({
+  const indexed: Array<{ sequence: number }> = await prisma.ledger.findMany({
     where: { sequence: { gte: minLedger, lte: maxLedger } },
     select: { sequence: true },
     orderBy: { sequence: 'asc' },
@@ -197,7 +197,10 @@ export async function runReconciliation(lookbackLedgers = 1000): Promise<Reconci
   let eventCountDiscrepancies: EventCountDiscrepancy[] = [];
 
   if (eventCheckEnd >= eventCheckStart) {
-    const indexedEventCounts = await prisma.event.groupBy({
+    const indexedEventCounts: Array<{
+      ledgerSequence: number;
+      _count: { _all: number };
+    }> = await prisma.event.groupBy({
       by: ['ledgerSequence'],
       where: { ledgerSequence: { gte: eventCheckStart, lte: eventCheckEnd } },
       _count: { _all: true },
