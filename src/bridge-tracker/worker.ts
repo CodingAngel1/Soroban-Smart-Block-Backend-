@@ -13,6 +13,7 @@ import { logger } from '../logger';
 
 let isRunning = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let activePoll: Promise<void> | null = null;
 
 export async function processBridgeEvent(event: BridgeEvent): Promise<void> {
   try {
@@ -125,13 +126,19 @@ export function startBridgeWorker(): void {
 
   isRunning = true;
   // Run first cycle immediately
-  pollCycle().catch((err) =>
-    logger.error('Bridge worker first cycle failed', { error: String(err) }),
-  );
-  pollTimer = setInterval(pollCycle, interval);
+  const runPoll = () => {
+    if (!isRunning || activePoll) return;
+    const task = pollCycle();
+    activePoll = task;
+    void task.finally(() => {
+      if (activePoll === task) activePoll = null;
+    });
+  };
+  runPoll();
+  pollTimer = setInterval(runPoll, interval);
 }
 
-export function stopBridgeWorker(): void {
+export async function stopBridgeWorker(): Promise<void> {
   if (!isRunning) return;
 
   logger.info('Stopping bridge worker');
@@ -140,6 +147,7 @@ export function stopBridgeWorker(): void {
     pollTimer = null;
   }
   isRunning = false;
+  await activePoll;
 }
 
 export function isBridgeWorkerRunning(): boolean {

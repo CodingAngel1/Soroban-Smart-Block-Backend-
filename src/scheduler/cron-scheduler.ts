@@ -425,7 +425,7 @@ class CronScheduler {
    * Gracefully shutdown all jobs.
    * Waits for currently running tasks to complete before stopping.
    */
-  public async gracefulShutdown(): Promise<void> {
+  public async gracefulShutdown(maxWaitTime = 30_000): Promise<void> {
     if (this.isShuttingDown) {
       logger.warn('[scheduler] Shutdown already in progress');
       return;
@@ -440,7 +440,6 @@ class CronScheduler {
     }
 
     // Wait for currently running tasks to complete
-    const maxWaitTime = 30_000; // 30s max wait
     const startTime = Date.now();
 
     while (Array.from(this.jobs.values()).some((j) => j.isRunning)) {

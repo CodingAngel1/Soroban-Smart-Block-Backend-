@@ -863,6 +863,7 @@ function sleep(ms: number) {
 }
 
 let currentWorker: SorobanEventWorker | null = null;
+let currentWorkerTask: Promise<void> | null = null;
 
 export async function runIndexer() {
   await startIndexerService();
@@ -871,17 +872,20 @@ export async function runIndexer() {
 export async function startIndexerService() {
   const worker = new SorobanEventWorker();
   currentWorker = worker;
-  await worker.start();
   // Match newly indexed contracts/events against stored saved searches (#966).
   startSavedSearchScheduler();
+  currentWorkerTask = worker.start();
+  await currentWorkerTask;
 }
 
-export function stopIndexerService(): void {
+export async function stopIndexerService(): Promise<void> {
   stopSavedSearchScheduler();
   if (currentWorker) {
     currentWorker.stop();
-    currentWorker = null;
   }
+  await currentWorkerTask;
+  currentWorker = null;
+  currentWorkerTask = null;
 }
 
 export class SorobanEventWorker {
