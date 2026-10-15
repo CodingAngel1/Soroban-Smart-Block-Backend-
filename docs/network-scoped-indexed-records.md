@@ -11,7 +11,8 @@ hashes in separate networks without cross-linking their records.
 Apply the migration before deploying the updated indexer. It assigns existing
 ledger, transaction, and event rows to the network attached to the
 `_indexer_states` singleton with the highest checkpoint (falling back to
-`mainnet` if no checkpoint exists), then changes the corresponding defaults.
+`mainnet` if no checkpoint exists). It removes the temporary column defaults
+after migration so new indexed rows must supply their network explicitly.
 The existing indexed tables previously represented only one network because
 ledger sequence and transaction hash were globally unique. Confirm that this
 assumption matches the database before rollout:

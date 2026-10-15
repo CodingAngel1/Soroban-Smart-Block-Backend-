@@ -34,6 +34,7 @@ import {
   indexTransaction,
   indexSafely,
 } from '../services/search/full-text-search';
+import { commitCatchUpCheckpoint } from './checkpoint';
 
 const BATCH = config.indexerBatchSize;
 const WORKERS = config.indexerCatchupWorkers;
@@ -245,8 +246,17 @@ export async function processLedgerRange(
   start: number,
   end: number,
   opts: { force?: boolean } = {},
-) {
+): Promise<{
+  network: string;
+  ledgerSequences: number[];
+  transactionHashes: string[];
+  eventIds: string[];
+}> {
   logger.info(`Indexing ledgers ${start} → ${end}`);
+  const network = getActiveNetwork();
+  const indexedLedgerSequences: number[] = [];
+  const indexedTransactionHashes = new Set<string>();
+  const indexedEventIds = new Set<string>();
 
   // Stage lag metrics update
   try {
@@ -279,7 +289,6 @@ export async function processLedgerRange(
 
     // Deep Reorg Check & Extended Backtracking
     const prevSeq = seq - 1;
-    const network = getActiveNetwork();
     const prevLedger = await prismaRead.ledger.findUnique({
       where: { network_sequence: { network, sequence: prevSeq } },
     });
@@ -353,7 +362,7 @@ export async function processLedgerRange(
     // Persist Ledger record
     const stopPersistLedgerTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
     await prismaWrite.ledger.upsert({
-      where: { network_sequence: { network: getActiveNetwork(), sequence: seq } },
+      where: { network_sequence: { network, sequence: seq } },
       update: {
         hash: ledgerMeta.hash,
         previousLedgerHash: ledgerMeta.previousLedgerHash,
@@ -361,7 +370,7 @@ export async function processLedgerRange(
         txCount: ledgerMeta.txCount,
       },
       create: {
-        network: getActiveNetwork(),
+        network,
         sequence: seq,
         hash: ledgerMeta.hash,
         previousLedgerHash: ledgerMeta.previousLedgerHash,
@@ -369,6 +378,7 @@ export async function processLedgerRange(
         txCount: ledgerMeta.txCount,
       },
     });
+    indexedLedgerSequences.push(seq);
     stopPersistLedgerTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
     realtimeHub.publishLedger({
@@ -387,7 +397,6 @@ export async function processLedgerRange(
   const stopEventsFetchTimer = indexerPipelineStageDuration.startTimer({ stage: 'fetch' });
   const events = await fetchEvents(start, end);
   stopEventsFetchTimer();
-  const network = getActiveNetwork();
   const legacyEventIds = events.map(
     (event, index) =>
       `${event.transactionHash}-${event.pagingToken || `${event.ledgerSequence}-${index}`}`,
@@ -437,7 +446,7 @@ export async function processLedgerRange(
 
     const existingTx = await prisma.transaction.findUnique({
       where: {
-        network_hash: { network: getActiveNetwork(), hash: event.transactionHash },
+        network_hash: { network, hash: event.transactionHash },
       },
     });
 
@@ -463,13 +472,13 @@ export async function processLedgerRange(
       const stopPersistTxTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
       const transaction = await prismaWrite.transaction.upsert({
         where: {
-          network_hash: { network: getActiveNetwork(), hash: event.transactionHash },
+          network_hash: { network, hash: event.transactionHash },
         },
         update: {},
         create: {
           id: uuidv7(),
           hash: event.transactionHash,
-          network: getActiveNetwork(),
+          network,
           ledgerSequence: event.ledgerSequence,
           ledgerCloseTime: event.ledgerCloseTime,
           sourceAccount: (txResult as any)?.sourceAccount ?? 'unknown',
@@ -536,6 +545,7 @@ export async function processLedgerRange(
       stopEnrichTxTimer();
       indexerPipelineStageProcessedTotal.inc({ stage: 'enrich', status: 'success' });
     }
+    indexedTransactionHashes.add(event.transactionHash);
 
     // Decode & Persist Event
     const stopDecodeEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'decode' });
@@ -567,6 +577,7 @@ export async function processLedgerRange(
         ledgerCloseTime: event.ledgerCloseTime,
       },
     });
+    indexedEventIds.add(savedEvent.id);
     stopPersistEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
 
@@ -594,6 +605,13 @@ export async function processLedgerRange(
     stopEnrichEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'enrich', status: 'success' });
   }
+
+  return {
+    network,
+    ledgerSequences: indexedLedgerSequences,
+    transactionHashes: [...indexedTransactionHashes],
+    eventIds: [...indexedEventIds],
+  };
 }
 
 /**
@@ -623,70 +641,33 @@ function chunkRange(from: number, to: number, n: number): Array<[number, number]
 }
 
 /**
- * Persist a CatchUpCheckpoint row for a worker's chunk.
- *
- * Uses upsert so a crash-then-restart path finds the existing row and reads
- * `lastCommittedLedger` to resume mid-batch instead of re-fetching from
- * `rangeStart`.
- */
-async function upsertCheckpoint(
-  rangeStart: number,
-  rangeEnd: number,
-  lastCommittedLedger: number | null,
-  completed: boolean,
-): Promise<void> {
-  const db = prismaWrite as any;
-  try {
-    await db.catchUpCheckpoint.upsert({
-      where: { rangeStart_rangeEnd: { rangeStart, rangeEnd } },
-      create: {
-        id: uuidv7(),
-        rangeStart,
-        rangeEnd,
-        lastCommittedLedger,
-        completed,
-      },
-      update: {
-        lastCommittedLedger,
-        completed,
-      },
-    });
-  } catch (err) {
-    // Best-effort: checkpoint failure must not abort the indexing work
-    logger.warn(`[catch-up] checkpoint upsert failed for ${rangeStart}-${rangeEnd}: ${err}`);
-  }
-}
-
-/**
  * Look up the resume cursor for a chunk from a persisted checkpoint.
  * Returns the last committed ledger + 1 (i.e. where to resume from), or
  * `rangeStart` if no checkpoint exists yet.
  */
-async function getChunkResumeCursor(rangeStart: number, rangeEnd: number): Promise<number> {
-  const db = prismaWrite as any;
-  try {
-    const row: { lastCommittedLedger: number | null; completed: boolean } | null =
-      await db.catchUpCheckpoint.findUnique({
-        where: { rangeStart_rangeEnd: { rangeStart, rangeEnd } },
-        select: { lastCommittedLedger: true, completed: true },
-      });
-    if (!row) return rangeStart;
-    if (row.completed) {
-      logger.info(`[catch-up] chunk ${rangeStart}-${rangeEnd} already completed — skipping`);
-      return rangeEnd + 1; // signals "nothing to do"
+async function getChunkResumeCursor(
+  rangeStart: number,
+  rangeEnd: number,
+  network: string,
+): Promise<number> {
+  const row = await prismaWrite.catchUpCheckpoint.findUnique({
+    where: { network_rangeStart_rangeEnd: { network, rangeStart, rangeEnd } },
+    select: { lastCommittedLedger: true, completed: true },
+  });
+  if (!row) return rangeStart;
+  if (row.completed) {
+    logger.info(`[catch-up] chunk ${rangeStart}-${rangeEnd} already completed — skipping`);
+    return rangeEnd + 1; // signals "nothing to do"
+  }
+  if (row.lastCommittedLedger !== null) {
+    const resume = row.lastCommittedLedger + 1;
+    if (resume <= rangeEnd) {
+      logger.info(
+        `[catch-up] resuming chunk ${rangeStart}-${rangeEnd} from ledger ${resume} ` +
+          `(last committed: ${row.lastCommittedLedger})`,
+      );
+      return resume;
     }
-    if (row.lastCommittedLedger !== null) {
-      const resume = row.lastCommittedLedger + 1;
-      if (resume <= rangeEnd) {
-        logger.info(
-          `[catch-up] resuming chunk ${rangeStart}-${rangeEnd} from ledger ${resume} ` +
-            `(last committed: ${row.lastCommittedLedger})`,
-        );
-        return resume;
-      }
-    }
-  } catch (err) {
-    logger.warn(`[catch-up] checkpoint read failed for ${rangeStart}-${rangeEnd}: ${err}`);
   }
   return rangeStart;
 }
@@ -700,8 +681,9 @@ async function getChunkResumeCursor(rangeStart: number, rangeEnd: number): Promi
  * last committed position so at most BATCH ledgers are re-processed.
  */
 async function processChunkWithCheckpointing(rangeStart: number, rangeEnd: number): Promise<void> {
+  const network = getActiveNetwork();
   // Resume from last checkpoint rather than rangeStart
-  const resumeFrom = await getChunkResumeCursor(rangeStart, rangeEnd);
+  const resumeFrom = await getChunkResumeCursor(rangeStart, rangeEnd, network);
   if (resumeFrom > rangeEnd) {
     // Chunk already completed in a previous run
     return;
@@ -710,9 +692,10 @@ async function processChunkWithCheckpointing(rangeStart: number, rangeEnd: numbe
   // Write an initial "in-progress" checkpoint so a crash before the first
   // sub-batch flush is also detectable (lastCommittedLedger = null means
   // "started but nothing committed yet").
-  await upsertCheckpoint(
+  await commitCatchUpCheckpoint(
     rangeStart,
     rangeEnd,
+    network,
     resumeFrom > rangeStart ? resumeFrom - 1 : null,
     false,
   );
@@ -720,9 +703,16 @@ async function processChunkWithCheckpointing(rangeStart: number, rangeEnd: numbe
   // Process in BATCH-sized sub-ranges, persisting progress after each one
   for (let subStart = resumeFrom; subStart <= rangeEnd; subStart += BATCH) {
     const subEnd = Math.min(subStart + BATCH - 1, rangeEnd);
-    await processLedgerRange(subStart, subEnd);
-    // Flush checkpoint after each successful sub-batch
-    await upsertCheckpoint(rangeStart, rangeEnd, subEnd, subEnd >= rangeEnd);
+    const indexedRecords = await processLedgerRange(subStart, subEnd);
+    // Commit progress only after a transaction confirms the indexed rows exist.
+    await commitCatchUpCheckpoint(
+      rangeStart,
+      rangeEnd,
+      network,
+      subEnd,
+      subEnd >= rangeEnd,
+      indexedRecords,
+    );
     logger.debug(
       `[catch-up] checkpoint flushed for chunk ${rangeStart}-${rangeEnd}: committed ${subEnd}`,
     );
