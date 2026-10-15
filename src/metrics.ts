@@ -43,6 +43,7 @@ export const gasFeeAlertApiOperations = new Counter({
   labelNames: ['operation', 'outcome'],
   registers: [registry],
 });
+const gasFeeAlertMeter = otelMetrics.getMeter('soroban-gas-fee-alerts');
 export const gasFeeAlertApiOperationsOtel = gasFeeAlertMeter.createCounter(
   'gas.fee_alert.api.operations',
 );
@@ -238,6 +239,13 @@ export const dbConnectionStatus = new Gauge({
 export const cacheBackendStatus = new Gauge({
   name: 'cache_backend_status',
   help: 'Cache backend in use: 1 = Redis connected, 0 = in-memory fallback',
+  registers: [registry],
+});
+
+export const redisCacheOperationsTotal = new Counter({
+  name: 'redis_cache_operations_total',
+  help: 'Redis-backed cache operations by bounded cache family, operation, and outcome',
+  labelNames: ['family', 'operation', 'outcome'],
   registers: [registry],
 });
 

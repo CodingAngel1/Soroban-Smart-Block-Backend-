@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { config } from '../config';
+import { acquirePostgresClient, registerPostgresPool } from './postgres-pool-metrics';
 
 /**
  * Apache AGE Graph Database Client
@@ -30,15 +31,18 @@ export interface GraphEdge {
 export class GraphDatabase {
   private pool: Pool;
   private graphName: string;
+  private unregisterPoolMetrics: () => void;
 
   constructor(graphName: string = 'blockchain_graph') {
     this.graphName = graphName;
+    const max = 20;
     this.pool = new Pool({
       connectionString: config.databaseUrl,
-      max: 20,
+      max,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
     });
+    this.unregisterPoolMetrics = registerPostgresPool('graph', this.pool, max);
   }
 
   /**
@@ -55,7 +59,13 @@ export class GraphDatabase {
       // Convert Cypher query to AGE format
       const ageQuery = this.convertToAgeQuery(query);
 
-      const result = await this.pool.query(ageQuery, { ...parameters, timeout });
+      const client = await acquirePostgresClient('graph', this.pool);
+      let result;
+      try {
+        result = await client.query(ageQuery, { ...parameters, timeout });
+      } finally {
+        client.release();
+      }
 
       const executionTime = Date.now() - startTime;
       const processedData = this.processAgeResult(result.rows);
@@ -251,7 +261,12 @@ export class GraphDatabase {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      await this.pool.query('SELECT 1');
+      const client = await acquirePostgresClient('graph', this.pool);
+      try {
+        await client.query('SELECT 1');
+      } finally {
+        client.release();
+      }
       return true;
     } catch {
       return false;
@@ -263,6 +278,7 @@ export class GraphDatabase {
    */
   async close(): Promise<void> {
     await this.pool.end();
+    this.unregisterPoolMetrics();
   }
 }
 
