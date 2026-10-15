@@ -65,6 +65,9 @@ jobs:
       - name: Enforce per-file TypeScript error budget
         run: npm run typecheck:budget:ci
 
+      - name: Enforce ESLint warning and debt budgets
+        run: npm run lint:budget:ci
+
       - name: Apply schema migrations for PostgreSQL integration tests
         run: npx prisma migrate deploy
         env:
