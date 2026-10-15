@@ -62,6 +62,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Enforce per-file TypeScript error budget
+        run: npm run typecheck:budget:ci
+
       - name: Apply schema migrations for PostgreSQL integration tests
         run: npx prisma migrate deploy
         env:
