@@ -42,7 +42,7 @@ const WORKERS = config.indexerCatchupWorkers;
 // IndexerState helpers & High Availability (HA) Leader Election
 // ---------------------------------------------------------------------------
 
-const getActiveNetwork = (): string => process.env.STELLAR_NETWORK ?? 'mainnet';
+const getActiveNetwork = (): string => config.stellarNetwork;
 
 export async function getLastIndexedLedger(network = getActiveNetwork()): Promise<number> {
   if (isP2pEnabled()) {
@@ -185,6 +185,7 @@ export async function releaseLeaderLease(
 }
 
 export async function rollbackLedgers(sequences: number[]) {
+  const network = getActiveNetwork();
   logger.info(`⚠️ Rollback triggered for ledgers: ${sequences.join(', ')}`);
 
   await prismaWrite.$transaction([
@@ -198,6 +199,7 @@ export async function rollbackLedgers(sequences: number[]) {
     // Delete Events for these ledgers
     prismaWrite.event.deleteMany({
       where: {
+        network,
         ledgerSequence: { in: sequences },
       },
     }),
@@ -205,6 +207,7 @@ export async function rollbackLedgers(sequences: number[]) {
     // Delete Transactions for these ledgers
     prismaWrite.transaction.deleteMany({
       where: {
+        network,
         ledgerSequence: { in: sequences },
       },
     }),
@@ -219,6 +222,7 @@ export async function rollbackLedgers(sequences: number[]) {
     // Delete Ledgers themselves
     prismaWrite.ledger.deleteMany({
       where: {
+        network,
         sequence: { in: sequences },
       },
     }),
@@ -275,7 +279,10 @@ export async function processLedgerRange(
 
     // Deep Reorg Check & Extended Backtracking
     const prevSeq = seq - 1;
-    const prevLedger = await prismaRead.ledger.findUnique({ where: { sequence: prevSeq } });
+    const network = getActiveNetwork();
+    const prevLedger = await prismaRead.ledger.findUnique({
+      where: { network_sequence: { network, sequence: prevSeq } },
+    });
 
     if (prevLedger && prevLedger.hash !== ledgerMeta.previousLedgerHash) {
       logger.warn(
@@ -293,7 +300,7 @@ export async function processLedgerRange(
         if (checkSeq <= 0) break;
 
         const localCheckLedger = await prismaRead.ledger.findUnique({
-          where: { sequence: checkSeq },
+          where: { network_sequence: { network, sequence: checkSeq } },
         });
         if (!localCheckLedger) break;
 
@@ -346,7 +353,7 @@ export async function processLedgerRange(
     // Persist Ledger record
     const stopPersistLedgerTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
     await prismaWrite.ledger.upsert({
-      where: { sequence: seq },
+      where: { network_sequence: { network: getActiveNetwork(), sequence: seq } },
       update: {
         hash: ledgerMeta.hash,
         previousLedgerHash: ledgerMeta.previousLedgerHash,
@@ -354,6 +361,7 @@ export async function processLedgerRange(
         txCount: ledgerMeta.txCount,
       },
       create: {
+        network: getActiveNetwork(),
         sequence: seq,
         hash: ledgerMeta.hash,
         previousLedgerHash: ledgerMeta.previousLedgerHash,
@@ -379,6 +387,20 @@ export async function processLedgerRange(
   const stopEventsFetchTimer = indexerPipelineStageDuration.startTimer({ stage: 'fetch' });
   const events = await fetchEvents(start, end);
   stopEventsFetchTimer();
+  const network = getActiveNetwork();
+  const legacyEventIds = events.map(
+    (event, index) =>
+      `${event.transactionHash}-${event.pagingToken || `${event.ledgerSequence}-${index}`}`,
+  );
+  const existingLegacyEvents = legacyEventIds.length
+    ? await prismaWrite.event.findMany({
+        where: { id: { in: legacyEventIds } },
+        select: { id: true, network: true },
+      })
+    : [];
+  const legacyEventNetworks = new Map(
+    existingLegacyEvents.map((event) => [event.id, event.network]),
+  );
 
   // Contracts recur across every event in the range — index each address once
   // per processed range rather than once per event.
@@ -414,7 +436,9 @@ export async function processLedgerRange(
     indexerPipelineStageProcessedTotal.inc({ stage: 'enrich', status: 'success' });
 
     const existingTx = await prisma.transaction.findUnique({
-      where: { hash: event.transactionHash },
+      where: {
+        network_hash: { network: getActiveNetwork(), hash: event.transactionHash },
+      },
     });
 
     if (!existingTx) {
@@ -438,11 +462,14 @@ export async function processLedgerRange(
       // Persist Stage
       const stopPersistTxTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
       const transaction = await prismaWrite.transaction.upsert({
-        where: { hash: event.transactionHash },
+        where: {
+          network_hash: { network: getActiveNetwork(), hash: event.transactionHash },
+        },
         update: {},
         create: {
           id: uuidv7(),
           hash: event.transactionHash,
+          network: getActiveNetwork(),
           ledgerSequence: event.ledgerSequence,
           ledgerCloseTime: event.ledgerCloseTime,
           sourceAccount: (txResult as any)?.sourceAccount ?? 'unknown',
@@ -517,7 +544,11 @@ export async function processLedgerRange(
     indexerPipelineStageProcessedTotal.inc({ stage: 'decode', status: 'success' });
 
     const positionKey = event.pagingToken || `${event.ledgerSequence}-${events.indexOf(event)}`;
-    const eventId = `${event.transactionHash}-${positionKey}`;
+    const legacyEventId = `${event.transactionHash}-${positionKey}`;
+    const eventId =
+      legacyEventNetworks.get(legacyEventId) === network
+        ? legacyEventId
+        : `${network}-${legacyEventId}`;
 
     const stopPersistEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
     const savedEvent = await prismaWrite.event.upsert({
@@ -526,6 +557,7 @@ export async function processLedgerRange(
       create: {
         id: eventId,
         transactionHash: event.transactionHash,
+        network,
         contractAddress: event.contractId,
         eventType,
         topics: event.topics,

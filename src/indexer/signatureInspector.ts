@@ -1,4 +1,5 @@
 import { prismaWrite as prisma } from '../db';
+import { config } from '../config';
 import { uuidv7 } from '../utils/uuidv7';
 
 // secp256r1 (P-256) OID prefix in DER-encoded SubjectPublicKeyInfo
@@ -75,11 +76,14 @@ export async function inspectSignature(
   }
 
   await prisma.signatureInspection.upsert({
-    where: { transactionHash: txHash },
+    where: {
+      network_transaction_hash: { network: config.stellarNetwork, transactionHash: txHash },
+    },
     update: { curveType, isPasskey, pubKeyX, pubKeyY, label },
     create: {
       id: uuidv7(),
       transactionHash: txHash,
+      network: config.stellarNetwork,
       ledgerSequence,
       curveType,
       isPasskey,
