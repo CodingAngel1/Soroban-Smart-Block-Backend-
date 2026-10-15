@@ -612,11 +612,10 @@ curl http://localhost:3000/startup
 
 ### Monitoring
 
-**Metrics** (Prometheus format):
-
-```bash
-curl http://localhost:3000/metrics
-```
+**Metrics** are exposed in Prometheus format at `/metrics`; scraping is
+restricted by the deployment's metrics authentication/network policy. API
+availability and endpoint-class latency objectives are in
+[docs/api-slo.md](./docs/api-slo.md).
 
 **Logs** (structured JSON):
 

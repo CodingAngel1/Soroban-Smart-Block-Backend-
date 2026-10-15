@@ -31,6 +31,90 @@ groups:
             the last 5-minute window. Check application logs and recent deployments.
           runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/http-5xx-surge.md"
 
+      # API endpoint-class SLOs are defined in docs/api-slo.md.
+      - record: api:request_error_ratio:rate1h
+        expr: |
+          sum by (endpoint_class) (rate(api_slo_requests_total{outcome="bad"}[1h]))
+          /
+          clamp_min(sum by (endpoint_class) (rate(api_slo_requests_total{outcome=~"good|bad"}[1h])), 1e-9)
+
+      - record: api:request_error_ratio:rate6h
+        expr: |
+          sum by (endpoint_class) (rate(api_slo_requests_total{outcome="bad"}[6h]))
+          /
+          clamp_min(sum by (endpoint_class) (rate(api_slo_requests_total{outcome=~"good|bad"}[6h])), 1e-9)
+
+      - alert: ApiEndpointClassAvailabilityFastBurn
+        expr: api:request_error_ratio:rate1h > (14.4 * 0.005)
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "API {{ $labels.endpoint_class }} availability is burning its error budget quickly"
+          description: >
+            The {{ $labels.endpoint_class }} endpoint class has a {{ $value | humanizePercentage }}
+            server-error ratio, above the 14.4x fast-burn threshold for its 99.5% availability SLO.
+            Check service dependencies, recent deployments, and the API SLO runbook.
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiEndpointClassAvailabilitySlowBurn
+        expr: api:request_error_ratio:rate6h > (6 * 0.005)
+        for: 30m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API {{ $labels.endpoint_class }} availability is consuming its error budget"
+          description: >
+            The {{ $labels.endpoint_class }} endpoint class has a {{ $value | humanizePercentage }}
+            six-hour server-error ratio, above the 6x slow-burn threshold for its 99.5% availability SLO.
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiReadLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, endpoint_class) (rate(api_slo_request_duration_seconds_bucket{endpoint_class="read",outcome="good"}[10m]))) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API read p95 latency exceeds 250 ms"
+          description: "Read-class p95 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiWriteLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, endpoint_class) (rate(api_slo_request_duration_seconds_bucket{endpoint_class="write",outcome="good"}[10m]))) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API write p95 latency exceeds 500 ms"
+          description: "Write-class p95 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiComputeLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, endpoint_class) (rate(api_slo_request_duration_seconds_bucket{endpoint_class="compute",outcome="good"}[10m]))) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API compute p95 latency exceeds 1.5 seconds"
+          description: "Compute-class p95 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiGraphqlLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, endpoint_class) (rate(api_slo_request_duration_seconds_bucket{endpoint_class="graphql",outcome="good"}[10m]))) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API GraphQL p95 latency exceeds 500 ms"
+          description: "GraphQL-class p95 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
       # ── Indexer Ingestion Lag ────────────────────────────────────────────────
       # Warns when the indexer falls more than 50 ledgers behind the chain tip
       # (degraded SLA), and pages at 200 ledgers (severe lag — roughly 16 min).

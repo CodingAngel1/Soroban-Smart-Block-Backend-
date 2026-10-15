@@ -22,6 +22,21 @@ export const httpRequestTotal = new Counter({
   registers: [registry],
 });
 
+export const apiSloRequestsTotal = new Counter({
+  name: 'api_slo_requests_total',
+  help: 'API requests by bounded endpoint class and SLO outcome',
+  labelNames: ['endpoint_class', 'outcome'],
+  registers: [registry],
+});
+
+export const apiSloRequestDuration = new Histogram({
+  name: 'api_slo_request_duration_seconds',
+  help: 'API request duration by bounded endpoint class and SLO outcome',
+  labelNames: ['endpoint_class', 'outcome'],
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2.5, 5, 10],
+  registers: [registry],
+});
+
 // ── HTTP Errors (global error handler) ───────────────────────────────────────
 export const httpErrorsTotal = new Counter({
   name: 'http_errors_total',
