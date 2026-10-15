@@ -10,6 +10,7 @@ import { getStalenessStatus, isFeeAggregationStale } from './indexer/fee-aggrega
 import { getGasAnalyticsStalenessStatus, isGasAnalyticsStale } from './indexer/gasAnalyticsEngine';
 import { config } from './config';
 import { scheduler, type JobHealthSnapshot } from './scheduler/cron-scheduler';
+import { dbConnectionStatus } from './metrics';
 
 /**
  * Health check status for individual dependencies
@@ -94,6 +95,7 @@ async function checkDatabaseHealth(): Promise<DependencyHealth> {
   ]);
   const readReplicaHealthy = readResult.status === 'fulfilled';
   const writePrimaryHealthy = writeResult.status === 'fulfilled';
+  dbConnectionStatus.set(writePrimaryHealthy ? 1 : 0);
 
   if (!writePrimaryHealthy || !readReplicaHealthy) {
     const status = writePrimaryHealthy ? 'degraded' : 'unhealthy';

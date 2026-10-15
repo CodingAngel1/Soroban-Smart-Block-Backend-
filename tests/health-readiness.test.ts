@@ -2,6 +2,7 @@ import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { getReadinessState } from '../src/readiness';
 import { getHealthStatus } from '../src/health';
 import { prismaRead, prismaWrite } from '../src/db';
+import { dbConnectionStatus } from '../src/metrics';
 
 vi.mock('../src/db', () => ({
   prismaRead: {
@@ -69,6 +70,7 @@ describe('Health and Readiness dependency set alignment', () => {
       readReplica: 'disconnected',
       writePrimary: 'connected',
     });
+    expect((await dbConnectionStatus.get()).values[0]?.value).toBe(1);
   });
 
   it('reports a write-primary outage as unhealthy even when reads remain available', async () => {
@@ -81,5 +83,6 @@ describe('Health and Readiness dependency set alignment', () => {
       readReplica: 'connected',
       writePrimary: 'disconnected',
     });
+    expect((await dbConnectionStatus.get()).values[0]?.value).toBe(0);
   });
 });

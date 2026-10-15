@@ -368,11 +368,10 @@ export const healthProbeDurationSeconds = new Histogram({
 
 // OTel mirror of probe counters — feeds OTLP exporters (Grafana Cloud, etc.)
 const healthProbeMeter = otelMetrics.getMeter('soroban-health-probes');
-export const healthProbeRequestsOtel = healthProbeMeter.createCounter(
-  'health.probe.requests',
-  { description: 'Total health probe requests by endpoint and outcome' },
-);
-export const healthProbeDurationOtel = healthProbeMeter.createHistogram(
-  'health.probe.duration',
-  { unit: 's', description: 'Health probe response time in seconds' },
-);
+export const healthProbeRequestsOtel = healthProbeMeter.createCounter('health.probe.requests', {
+  description: 'Total health probe requests by endpoint and outcome',
+});
+export const healthProbeDurationOtel = healthProbeMeter.createHistogram('health.probe.duration', {
+  unit: 's',
+  description: 'Health probe response time in seconds',
+});
