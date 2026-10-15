@@ -186,6 +186,7 @@ jobs:
           fi
 
       - name: Apply manifests
+        id: apply
         if: steps.kubeconfig-check.outputs.configured == 'true'
         run: |
           if [ -f k8s/kustomization.yaml ]; then
@@ -198,8 +199,13 @@ jobs:
           fi
 
       - name: Wait for rollout
+        id: rollout
         if: steps.kubeconfig-check.outputs.configured == 'true'
         run: kubectl rollout status deployment/soroban-api -n soroban --timeout=300s
+
+      - name: Roll back failed staging release
+        if: failure() && steps.kubeconfig-check.outputs.configured == 'true' && (steps.apply.outcome == 'failure' || steps.rollout.outcome == 'failure')
+        run: bash scripts/rollback-release.sh soroban soroban-api
 
       - name: Skip notice — no staging kubeconfig configured
         if: steps.kubeconfig-check.outputs.configured != 'true'
@@ -258,6 +264,7 @@ jobs:
           fi
 
       - name: Apply manifests
+        id: apply
         if: steps.kubeconfig-check.outputs.configured == 'true'
         run: |
           if [ -f k8s/kustomization.yaml ]; then
@@ -270,8 +277,13 @@ jobs:
           fi
 
       - name: Wait for rollout
+        id: rollout
         if: steps.kubeconfig-check.outputs.configured == 'true'
         run: kubectl rollout status deployment/soroban-api-mainnet -n soroban --timeout=300s
+
+      - name: Roll back failed production release
+        if: failure() && steps.kubeconfig-check.outputs.configured == 'true' && (steps.apply.outcome == 'failure' || steps.rollout.outcome == 'failure')
+        run: bash scripts/rollback-release.sh soroban soroban-api-mainnet
 
       - name: Skip notice — no production kubeconfig configured
         if: steps.kubeconfig-check.outputs.configured != 'true'
