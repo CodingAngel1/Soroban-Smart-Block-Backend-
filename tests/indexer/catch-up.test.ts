@@ -117,4 +117,36 @@ describe('checkpointed indexer catch-up', () => {
 
     expect(processRange).not.toHaveBeenCalled();
   });
+
+  it('stops at a completed batch while paused and resumes after its checkpoint', async () => {
+    const { store, getCheckpoint } = createStore();
+    const processRange = vi.fn(async () => undefined);
+    const isPaused = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    const options = {
+      network: 'mainnet',
+      rangeStart: 1,
+      rangeEnd: 10_000,
+      workStart: 1,
+      workEnd: 4,
+      batchSize: 2,
+      store,
+      processRange,
+      isPaused,
+    };
+
+    await processCheckpointedRange(options);
+    expect(processRange).toHaveBeenCalledTimes(1);
+    expect(getCheckpoint()).toEqual({ lastCommittedLedger: 2, completed: false });
+
+    await processCheckpointedRange(options);
+    expect(processRange.mock.calls).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+    expect(getCheckpoint()).toEqual({ lastCommittedLedger: 4, completed: false });
+  });
 });

@@ -37,6 +37,7 @@ export interface CheckpointedRangeOptions {
   batchSize: number;
   store: CatchUpCheckpointStore;
   processRange: (start: number, end: number) => Promise<void>;
+  isPaused?: () => Promise<boolean>;
 }
 
 export async function processCheckpointedRange({
@@ -48,7 +49,8 @@ export async function processCheckpointedRange({
   batchSize,
   store,
   processRange,
-}: CheckpointedRangeOptions): Promise<void> {
+  isPaused,
+}: CheckpointedRangeOptions): Promise<boolean> {
   if (
     !network ||
     !Number.isInteger(rangeStart) ||
@@ -72,10 +74,10 @@ export async function processCheckpointedRange({
     select: { lastCommittedLedger: true, completed: true },
   });
 
-  if (checkpoint?.completed) return;
+  if (checkpoint?.completed) return true;
 
   const resumeFrom = Math.max(workStart, (checkpoint?.lastCommittedLedger ?? workStart - 1) + 1);
-  if (resumeFrom > workEnd) return;
+  if (resumeFrom > workEnd) return true;
 
   await store.upsert({
     where: { network_rangeStart_rangeEnd: key },
@@ -92,6 +94,7 @@ export async function processCheckpointedRange({
   });
 
   for (let start = resumeFrom; start <= workEnd; start += batchSize) {
+    if (await isPaused?.()) return false;
     const end = Math.min(start + batchSize - 1, workEnd);
     await processRange(start, end);
     await store.upsert({
@@ -108,4 +111,5 @@ export async function processCheckpointedRange({
       },
     });
   }
+  return true;
 }

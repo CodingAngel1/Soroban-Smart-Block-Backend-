@@ -35,6 +35,7 @@ import {
   indexSafely,
 } from '../services/search/full-text-search';
 import { processCheckpointedRange, type CatchUpCheckpointStore } from './catch-up';
+import { getIndexerPauseState } from './worker-control';
 
 const BATCH = config.indexerBatchSize;
 const WORKERS = config.indexerCatchupWorkers;
@@ -619,7 +620,7 @@ export async function indexSingleLedger(ledgerSeq: number): Promise<void> {
  * Database upserts use deterministic transaction/event keys, so a crash
  * between persistence and checkpointing can safely replay the last batch.
  */
-async function catchUp(from: number, to: number): Promise<void> {
+async function catchUp(from: number, to: number): Promise<boolean> {
   const firstWindow = Math.floor((from - 1) / CHECKPOINT_WINDOW_SIZE) * CHECKPOINT_WINDOW_SIZE + 1;
   const windows: Array<[number, number, number, number]> = [];
   for (let windowStart = firstWindow; windowStart <= to; windowStart += CHECKPOINT_WINDOW_SIZE) {
@@ -629,25 +630,34 @@ async function catchUp(from: number, to: number): Promise<void> {
   logger.info(`[catch-up] ${windows.length} checkpoint window(s) covering ledgers ${from}–${to}`);
 
   const concurrency = Math.max(1, WORKERS);
-  await Promise.all(
+  const workerResults = await Promise.all(
     Array.from({ length: Math.min(concurrency, windows.length) }, async (_, worker) => {
+      let complete = true;
       for (let index = worker; index < windows.length; index += concurrency) {
         const [rangeStart, rangeEnd, workStart, workEnd] = windows[index];
-        await processCheckpointedRange({
-          network: getActiveNetwork(),
-          rangeStart,
-          rangeEnd,
-          workStart,
-          workEnd,
-          batchSize: BATCH,
-          store: catchUpCheckpointStore,
-          processRange: processLedgerRange,
-        });
+        complete =
+          (await processCheckpointedRange({
+            network: getActiveNetwork(),
+            rangeStart,
+            rangeEnd,
+            workStart,
+            workEnd,
+            batchSize: BATCH,
+            store: catchUpCheckpointStore,
+            processRange: processLedgerRange,
+            isPaused: async () => (await getIndexerPauseState()).paused,
+          })) && complete;
+        if (!complete) return false;
       }
+      return complete;
     }),
   );
+  if (workerResults.some((complete) => !complete) || (await getIndexerPauseState()).paused) {
+    return false;
+  }
   await setLastIndexedLedger(to);
   logger.info(`[catch-up] done — cursor advanced to ${to}`);
+  return true;
 }
 
 async function processSessionAuthorization(
@@ -840,6 +850,10 @@ export class SorobanEventWorker {
 
     while (!this.shouldStop) {
       try {
+        if ((await getIndexerPauseState()).paused) {
+          await sleep(config.indexerPollIntervalMs);
+          continue;
+        }
         if (this.isProcessing) {
           await sleep(config.indexerPollIntervalMs);
           continue;
@@ -860,6 +874,7 @@ export class SorobanEventWorker {
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        if ((await getIndexerPauseState()).paused) return;
         const last = await getLastIndexedLedger();
         if (last >= targetLedger) return;
 
@@ -883,8 +898,8 @@ export class SorobanEventWorker {
           // Attempt to backfill the gap
           try {
             logger.info(`🔄 Attempting to backfill gap ${gapStart} → ${gapEnd}...`);
-            if (gapEnd - gapStart >= BATCH && WORKERS > 1) {
-              await catchUp(gapStart, gapEnd);
+            if (gapEnd - gapStart >= BATCH) {
+              if (!(await catchUp(gapStart, gapEnd))) return;
             } else {
               await processLedgerRange(gapStart, gapEnd);
               await setLastIndexedLedger(gapEnd);
@@ -912,8 +927,8 @@ export class SorobanEventWorker {
         }
 
         const gap = targetLedger - last;
-        if (gap > BATCH && WORKERS > 1) {
-          await catchUp(last + 1, targetLedger);
+        if (gap > BATCH) {
+          if (!(await catchUp(last + 1, targetLedger))) return;
           return;
         }
 
