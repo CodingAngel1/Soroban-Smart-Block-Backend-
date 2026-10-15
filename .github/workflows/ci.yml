@@ -251,6 +251,15 @@ jobs:
           path: artifacts/
           retention-days: 30
 
+  runtime-security:
+    name: Runtime Container Privileges
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify runtime privilege restrictions
+        run: bash scripts/verify-runtime-privileges.sh
+
   security:
     name: Security
     runs-on: ubuntu-latest
