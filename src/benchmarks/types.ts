@@ -17,6 +17,7 @@ export interface BenchmarkResult {
     samples: number;
   };
   threshold?: number; // regression threshold in percent
+  throughput?: { perSecond: number; unit: string; sampleSize: number };
 }
 
 export interface BenchmarkComparison {
