@@ -16,6 +16,19 @@ function hashApiKey(raw: string): string {
 }
 
 vi.mock('../src/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn() } }));
+vi.mock('../src/config', () => ({
+  config: {
+    rateLimitPublicWindowMs: 60_000,
+    rateLimitPublicMax: 100,
+    rateLimitDeveloperWindowMs: 60_000,
+    rateLimitDeveloperMax: 300,
+    rateLimitPremiumWindowMs: 60_000,
+    rateLimitPremiumMax: 1000,
+    rateLimitAdaptiveEnabled: false,
+  },
+}));
+vi.mock('../src/db', () => ({ prismaRead: {} }));
+vi.mock('../src/cache', () => ({ buildCacheKey: (...parts: string[]) => parts.join(':') }));
 vi.mock('../src/middleware/tokenBucket', () => ({
   checkTokenBucket: vi.fn(),
   setRateLimitRedisClient: vi.fn(),
@@ -42,10 +55,12 @@ function makeRes(): {
   res: Response;
   status: ReturnType<typeof vi.fn>;
   json: ReturnType<typeof vi.fn>;
+  setHeader: ReturnType<typeof vi.fn>;
 } {
   const json = vi.fn();
   const status = vi.fn().mockReturnValue({ json });
-  return { res: { status, json } as unknown as Response, status, json };
+  const setHeader = vi.fn();
+  return { res: { status, json, setHeader } as unknown as Response, status, json, setHeader };
 }
 
 describe('rate limit configuration', () => {
@@ -96,7 +111,7 @@ describe('tieredRateLimit', () => {
     const req = makeReq({
       apiKey: { id: 'k', keyName: 'n', developerId: 'd', tier: 'pro' },
     } as any);
-    const { res, setHeader } = makeRes();
+    const { res } = makeRes();
     await tieredRateLimit(req, res, next);
     // The function should set rate limit headers or handle the request
     expect(res).toBeDefined();
@@ -106,6 +121,34 @@ describe('tieredRateLimit', () => {
     const req = makeReq({ headers: {} });
     const { res } = makeRes();
     await expect(tieredRateLimit(req, res, next)).resolves.not.toThrow();
+  });
+
+  it('applies the API-key tier override in local fallback and reports a 429', async () => {
+    const apiKey = {
+      id: `rate-limit-test-${crypto.randomUUID()}`,
+      keyName: 'test',
+      developerId: 'test-developer',
+      tier: 'developer',
+      rateLimitOverride: 1,
+    };
+    const req = makeReq();
+    req.apiKey = apiKey;
+    const allowedResponse = makeRes();
+    const limitedResponse = makeRes();
+
+    await tieredRateLimit(req, allowedResponse.res, next);
+    await tieredRateLimit(req, limitedResponse.res, next);
+
+    expect(mockCheck).not.toHaveBeenCalled();
+    expect(allowedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '1');
+    expect(allowedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Tier', 'developer');
+    expect(limitedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '1');
+    expect(limitedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '0');
+    expect(limitedResponse.status).toHaveBeenCalledWith(429);
+    expect(limitedResponse.setHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
+    expect(limitedResponse.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Rate limit exceeded', tier: 'developer' }),
+    );
   });
 });
 

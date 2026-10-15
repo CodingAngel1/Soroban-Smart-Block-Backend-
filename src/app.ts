@@ -17,6 +17,7 @@ import { config } from './config';
 import { router } from './api/router';
 import { billingRouter } from './services/stripe-billing';
 import { correlationMiddleware } from './middleware/correlation';
+import { CORS_ALLOWED_HEADERS, CORS_EXPOSED_HEADERS } from './middleware/corsHeaders';
 import { versioningMiddleware } from './middleware/versioning';
 import { tieredRateLimit } from './middleware/rateLimit';
 import { metricsMiddleware } from './middleware/metricsMiddleware';
@@ -189,7 +190,8 @@ export function createApp(options: AppOptions): express.Express {
     cors({
       origin: corsOrigin,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Api-Key', 'X-Request-Id'],
+      allowedHeaders: CORS_ALLOWED_HEADERS,
+      exposedHeaders: CORS_EXPOSED_HEADERS,
       credentials: corsCredentials,
     }),
   );
