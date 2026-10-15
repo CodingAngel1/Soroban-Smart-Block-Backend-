@@ -30,6 +30,8 @@ export const httpErrorsTotal = new Counter({
   registers: [registry],
 });
 
+const gasFeeAlertMeter = otelMetrics.getMeter('soroban-gas-fee-alerts');
+
 export const contractAbiSubmissionOperations = new Counter({
   name: 'contract_abi_submission_operations_total',
   help: 'Contract ABI submission workflow operations by operation and outcome',
@@ -168,12 +170,21 @@ export const http5xxSurge = new Gauge({
 export const indexerLastLedger = new Gauge({
   name: 'indexer_last_ledger',
   help: 'Last ledger sequence number processed by the indexer',
+  labelNames: ['network'],
   registers: [registry],
 });
 
 export const indexerIngestionLag = new Gauge({
   name: 'indexer_ingestion_lag_ledgers',
   help: 'Number of ledgers behind the chain tip',
+  labelNames: ['network'],
+  registers: [registry],
+});
+
+export const indexerLedgerCloseTimestamp = new Gauge({
+  name: 'indexer_ledger_close_timestamp_seconds',
+  help: 'Unix timestamp of the latest successfully indexed ledger close time',
+  labelNames: ['network'],
   registers: [registry],
 });
 
