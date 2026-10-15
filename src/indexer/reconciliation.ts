@@ -11,19 +11,51 @@ import { config } from '../config';
 import { logger } from '../logger';
 import { triggerAutomatedGapRepair } from './repair';
 import { scheduler } from '../scheduler/cron-scheduler';
+import { fetchEvents } from './rpc';
 
 const HEARTBEAT_ID = 'indexer:reconciliation-sweep';
+
+export interface EventCountDiscrepancy {
+  ledgerSequence: number;
+  indexedCount: number;
+  upstreamCount: number;
+}
 
 export interface ReconciliationReport {
   timestamp: string;
   localLedgerCount: number;
   localTxCount: number;
+  localEventCount: number;
+  upstreamEventCount: number;
+  eventCheckStart: number;
+  eventCheckEnd: number;
+  eventCountDiscrepancies: EventCountDiscrepancy[];
   horizonLatestLedger: number;
   localLatestLedger: number;
   ledgerGap: number;
   missingLedgerRanges: Array<[number, number]>;
   discrepancies: string[];
   healthy: boolean;
+}
+
+export function findEventCountDiscrepancies(
+  indexedCounts: Array<{ ledgerSequence: number; count: number }>,
+  upstreamCounts: Map<number, number>,
+): EventCountDiscrepancy[] {
+  const indexedByLedger = new Map(
+    indexedCounts.map(({ ledgerSequence, count }) => [ledgerSequence, count]),
+  );
+  const ledgerSequences = new Set([...indexedByLedger.keys(), ...upstreamCounts.keys()]);
+
+  return [...ledgerSequences]
+    .sort((a, b) => a - b)
+    .flatMap((ledgerSequence) => {
+      const indexedCount = indexedByLedger.get(ledgerSequence) ?? 0;
+      const upstreamCount = upstreamCounts.get(ledgerSequence) ?? 0;
+      return indexedCount === upstreamCount
+        ? []
+        : [{ ledgerSequence, indexedCount, upstreamCount }];
+    });
 }
 
 /**
@@ -157,12 +189,63 @@ export async function runReconciliation(lookbackLedgers = 1000): Promise<Reconci
     }
   }
 
+  const eventCheckStart = Math.max(1, localLatestLedger - lookbackLedgers + 1);
+  const eventCheckEnd =
+    horizonLatestLedger > 0 ? Math.min(localLatestLedger, horizonLatestLedger) : 0;
+  let localEventCount = 0;
+  let upstreamEventCount = 0;
+  let eventCountDiscrepancies: EventCountDiscrepancy[] = [];
+
+  if (eventCheckEnd >= eventCheckStart) {
+    const indexedEventCounts = await prisma.event.groupBy({
+      by: ['ledgerSequence'],
+      where: { ledgerSequence: { gte: eventCheckStart, lte: eventCheckEnd } },
+      _count: { _all: true },
+    });
+    const indexedCounts = indexedEventCounts.map((entry) => ({
+      ledgerSequence: entry.ledgerSequence,
+      count: entry._count._all,
+    }));
+    localEventCount = indexedCounts.reduce((sum, entry) => sum + entry.count, 0);
+    try {
+      const upstreamEvents = await fetchEvents(eventCheckStart, eventCheckEnd);
+      const inRangeEvents = upstreamEvents.filter(
+        (event) => event.ledgerSequence >= eventCheckStart && event.ledgerSequence <= eventCheckEnd,
+      );
+      const upstreamCounts = new Map<number, number>();
+      for (const event of inRangeEvents) {
+        upstreamCounts.set(
+          event.ledgerSequence,
+          (upstreamCounts.get(event.ledgerSequence) ?? 0) + 1,
+        );
+      }
+      upstreamEventCount = inRangeEvents.length;
+      eventCountDiscrepancies = findEventCountDiscrepancies(indexedCounts, upstreamCounts);
+
+      if (eventCountDiscrepancies.length > 0) {
+        discrepancies.push(
+          `Found ${eventCountDiscrepancies.length} ledger(s) with indexed event totals that differ from Soroban RPC ` +
+            `in range ${eventCheckStart}–${eventCheckEnd}`,
+        );
+      }
+    } catch (err) {
+      const message = `Failed to fetch upstream event totals for range ${eventCheckStart}–${eventCheckEnd}: ${err}`;
+      discrepancies.push(message);
+      logger.error(`[reconciliation] ${message}`);
+    }
+  }
+
   const healthy = discrepancies.length === 0;
 
   const report: ReconciliationReport = {
     timestamp,
     localLedgerCount,
     localTxCount,
+    localEventCount,
+    upstreamEventCount,
+    eventCheckStart,
+    eventCheckEnd,
+    eventCountDiscrepancies,
     horizonLatestLedger,
     localLatestLedger,
     ledgerGap,
