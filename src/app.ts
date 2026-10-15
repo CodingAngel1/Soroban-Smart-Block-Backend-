@@ -48,6 +48,7 @@ import { getP2pStatusSnapshot, resolveLedgerLocation } from './p2p';
 import { getIndexerStatus } from './indexer-state';
 import { statusRouter } from './api/status';
 import { logger } from './logger';
+import { configureApiJsonSerialization } from './lib/api-timestamps';
 
 export interface AppOptions {
   /** Returns true once graceful shutdown has begun (probes respond 503). */
@@ -62,6 +63,7 @@ export function createApp(options: AppOptions): express.Express {
   const { isShuttingDown, serviceStartTime, disabledServices } = options;
 
   const app = express();
+  configureApiJsonSerialization(app);
   app.set('trust proxy', config.trustProxy);
   app.use(rejectUntrustedForwardedHeaders);
 
