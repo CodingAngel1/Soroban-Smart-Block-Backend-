@@ -48,6 +48,8 @@ import { getP2pStatusSnapshot, resolveLedgerLocation } from './p2p';
 import { getIndexerStatus } from './indexer-state';
 import { statusRouter } from './api/status';
 import { logger } from './logger';
+import { getPrismaPoolMetrics } from './db/prisma-pool-metrics';
+import { collectPostgresPoolMetrics } from './db/postgres-pool-metrics';
 
 export interface AppOptions {
   /** Returns true once graceful shutdown has begun (probes respond 503). */
@@ -258,8 +260,13 @@ export function createApp(options: AppOptions): express.Express {
     metricsRateLimiter,
     metricsAuth,
     asyncHandler(async (_req, res) => {
+      collectPostgresPoolMetrics();
       res.set('Content-Type', registry.contentType);
-      res.end(await registry.metrics());
+      const [applicationMetrics, prismaPoolMetrics] = await Promise.all([
+        registry.metrics(),
+        getPrismaPoolMetrics(),
+      ]);
+      res.end(`${applicationMetrics}${prismaPoolMetrics}`);
     }),
   );
 
