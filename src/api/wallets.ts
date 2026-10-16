@@ -3,6 +3,7 @@ import { container } from '../services/container';
 import { z } from 'zod';
 import { validateAddressParam } from '../middleware/sanitize';
 import { asyncHandler } from '../middleware/asyncHandler';
+import { createCursorScope, decodeOpaqueCursor, encodeOpaqueCursor } from '../utils/opaque-cursor';
 import {
   fetchHorizonOperations as fetchHorizonOperationsTyped,
   type HorizonOperation,
@@ -579,10 +580,20 @@ function compareJourneyItems(a: JourneyItem, b: JourneyItem): number {
   return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
 
+class InvalidJourneyCursorError extends Error {
+  statusCode = 400;
+  code = 'INVALID_CURSOR';
+
+  constructor() {
+    super('Invalid or mismatched cursor');
+    this.name = 'InvalidJourneyCursorError';
+  }
+}
+
 const journeyQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  /** Exclusive time cursor: return items strictly older than this ISO-8601 instant. */
-  before: z.string().datetime({ offset: true }).optional(),
+  /** Opaque cursor from the previous response. */
+  before: z.string().optional(),
 });
 
 /**
@@ -597,7 +608,8 @@ const journeyQuerySchema = z.object({
  *       transfer/mint/burn events are emitted as `token_change` items carrying a
  *       signed `delta` (in/out/self) instead of raw events, so the timeline reads
  *       as a story rather than four separate scans. Pagination walks time: pass
- *       the previous response's `nextCursor` as `before` to fetch the next page.
+ *       the previous response's opaque `nextCursor` as `before` to fetch the
+ *       next page. Cursors are bound to this wallet and page size.
  *     tags: [Wallets]
  *     parameters:
  *       - in: path
@@ -611,8 +623,8 @@ const journeyQuerySchema = z.object({
  *         description: Maximum number of timeline items per page
  *       - in: query
  *         name: before
- *         schema: { type: string, format: date-time }
- *         description: Exclusive time cursor — return items strictly older than this instant (use the previous page's nextCursor)
+ *         schema: { type: string }
+ *         description: Opaque cursor from the previous response, bound to this wallet and page size
  *     responses:
  *       200:
  *         description: A page of the merged timeline
@@ -652,8 +664,8 @@ const journeyQuerySchema = z.object({
  *                       to: { type: string, nullable: true, description: 'token_change only' }
  *                       counterparty: { type: string, nullable: true, description: 'token_change only' }
  *                 limit: { type: integer }
- *                 before: { type: string, format: date-time, nullable: true, description: 'Cursor this page was built from' }
- *                 nextCursor: { type: string, format: date-time, nullable: true, description: 'Pass as `before` for the next page' }
+ *                 before: { type: string, nullable: true, description: 'Opaque cursor this page was built from' }
+ *                 nextCursor: { type: string, nullable: true, description: 'Opaque cursor to pass as `before` for the next page' }
  *                 hasMore: { type: boolean }
  *                 counts: { type: object, description: 'Per-type counts within this page' }
  *               example:
@@ -683,7 +695,7 @@ const journeyQuerySchema = z.object({
  *                     reason: null
  *                 limit: 20
  *                 before: null
- *                 nextCursor: '2026-06-19T07:20:00.000Z'
+ *                 nextCursor: 'v1.<encrypted-cursor>'
  *                 hasMore: true
  *                 counts: { transaction: 0, event: 0, token_change: 1, governance_vote: 1 }
  *       400:
@@ -702,8 +714,24 @@ walletRouter.get(
   validateAddressParam('address'),
   asyncHandler(async (req: Request, res: Response) => {
     const prismaRead = container.getPrismaRead();
-    const { limit, before } = journeyQuerySchema.parse(req.query);
     const address = req.params.address;
+    const parsedQuery = journeyQuerySchema.parse(req.query);
+    const { limit } = parsedQuery;
+    const scope = createCursorScope(`wallets.journey:${address}`, { limit });
+    let before: string | undefined;
+    if (parsedQuery.before !== undefined) {
+      const decoded = decodeOpaqueCursor(parsedQuery.before, scope);
+      if (
+        typeof decoded !== 'object' ||
+        decoded === null ||
+        !('timestamp' in decoded) ||
+        typeof decoded.timestamp !== 'string' ||
+        !Number.isFinite(Date.parse(decoded.timestamp))
+      ) {
+        throw new InvalidJourneyCursorError();
+      }
+      before = decoded.timestamp;
+    }
     const beforeDate = before ? new Date(before) : undefined;
     const timeFilter = beforeDate ? { lt: beforeDate } : undefined;
 
@@ -833,12 +861,15 @@ walletRouter.get(
     const saturated =
       transactions.length === limit || events.length === limit || votes.length === limit;
     const hasMore = merged.length > limit || saturated;
-    const nextCursor = page.length > 0 ? page[page.length - 1].timestamp : null;
+    const nextCursor =
+      page.length > 0
+        ? encodeOpaqueCursor({ timestamp: page[page.length - 1].timestamp }, scope)
+        : null;
 
     res.json({
       data: page,
       limit,
-      before: before ?? null,
+      before: parsedQuery.before ?? null,
       nextCursor,
       hasMore,
       counts,

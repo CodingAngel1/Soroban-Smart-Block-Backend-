@@ -34,6 +34,11 @@ vi.mock('../../src/stellar/horizon-client', () => ({
 
 import { container } from '../../src/services/container';
 import { walletRouter } from '../../src/api/wallets';
+import {
+  createCursorScope,
+  decodeOpaqueCursor,
+  encodeOpaqueCursor,
+} from '../../src/utils/opaque-cursor';
 
 const prisma = container.getPrismaRead() as any;
 
@@ -42,7 +47,8 @@ app.use(express.json());
 app.use('/wallets', walletRouter);
 app.use((err: Error, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (res.headersSent) return next(err);
-  const status = err.name === 'ZodError' ? 400 : 500;
+  const status =
+    err.name === 'ZodError' ? 400 : ((err as Error & { statusCode?: number }).statusCode ?? 500);
   res.status(status).json({ error: err.message });
 });
 
@@ -166,13 +172,19 @@ describe('GET /wallets/:address/journey', () => {
 
   it('paginates by time, passing the exclusive cursor to every source', async () => {
     const before = '2026-06-20T00:00:00.000Z';
-    const res = await request(app).get(`/wallets/${ADDRESS}/journey`).query({ before, limit: 2 });
+    const scope = createCursorScope(`wallets.journey:${ADDRESS}`, { limit: 2 });
+    const beforeCursor = encodeOpaqueCursor({ timestamp: before }, scope);
+    const res = await request(app)
+      .get(`/wallets/${ADDRESS}/journey`)
+      .query({ before: beforeCursor, limit: 2 });
 
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(2);
     expect(res.body.hasMore).toBe(true);
     // Cursor = oldest item on the returned page.
-    expect(res.body.nextCursor).toBe(res.body.data[1].timestamp);
+    expect(decodeOpaqueCursor(res.body.nextCursor, scope)).toEqual({
+      timestamp: res.body.data[1].timestamp,
+    });
 
     const cursor = { lt: new Date(before) };
     expect(prisma.transaction.findMany).toHaveBeenCalledWith(

@@ -179,7 +179,7 @@ contractRouter.get(
 
 /**
  * @swagger
- * /api/v1/contracts/protocol/{protocolKey}:
+ * /contracts/protocol/{protocolKey}:
  *   get:
  *     summary: List every network deployment grouped under one protocol key
  *     tags: [Contracts]

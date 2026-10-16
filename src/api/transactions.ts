@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
+import { AppError } from '../middleware/errorHandler';
 import { transactionService } from '../services/transaction.service';
+import { createCursorScope, decodeOpaqueCursor, encodeOpaqueCursor } from '../utils/opaque-cursor';
 
 /**
  * @swagger
@@ -13,8 +15,8 @@ import { transactionService } from '../services/transaction.service';
 export const transactionRouter = Router();
 
 const listSchema = z.object({
-  // cursor-based (preferred for large datasets) — cursor = ledger number
-  cursor: z.coerce.number().int().min(0).optional(),
+  // Opaque, query-bound cursor for keyset pagination.
+  cursor: z.string().optional(),
   // offset-based fallback
   page: z.coerce.number().min(1).default(1),
   limit: z.coerce.number().min(1).max(100).default(20),
@@ -35,11 +37,10 @@ const listSchema = z.object({
  *     parameters:
  *       - in: query
  *         name: cursor
- *         schema: { type: integer, minimum: 0 }
+ *         schema: { type: string }
  *         description: >-
- *           Ledger sequence cursor (preferred for large datasets). When set,
- *           returns rows with ledgerSequence < cursor in descending order and the
- *           response uses the cursor envelope.
+ *           Opaque cursor returned by the previous response. Cursors are bound
+ *           to this endpoint, network, filters, and page size.
  *       - in: query
  *         name: page
  *         schema: { type: integer, minimum: 1, default: 1 }
@@ -84,10 +85,10 @@ const listSchema = z.object({
  *                       type: array
  *                       items: { $ref: '#/components/schemas/Transaction' }
  *                     nextCursor:
- *                       type: integer
+ *                       type: string
  *                       nullable: true
- *                       description: ledgerSequence to pass as the next `cursor`, or null when there are no more rows
- *                       example: 3168074
+ *                       description: Opaque cursor to pass as the next `cursor`, or null when there are no more rows
+ *                       example: 'v1.<encrypted-cursor>'
  *                     hasNext: { type: boolean, example: true }
  *                 - title: OffsetPage
  *                   type: object
@@ -110,13 +111,41 @@ const listSchema = z.object({
  *                 error: limit must be less than or equal to 100
  */
 // GET /transactions
-// Cursor mode:  ?cursor=<ledger>&limit=20&contract=...
+// Cursor mode:  ?cursor=<opaque-token>&limit=20&contract=...
 // Offset mode:  ?page=2&limit=20&contract=...
 transactionRouter.get(
   '/',
   asyncHandler(async (req: Request, res: Response) => {
     const q = listSchema.parse(req.query);
-    const result = await transactionService.listTransactions(q);
+    const scope = createCursorScope('transactions', {
+      limit: q.limit,
+      contract: q.contract,
+      account: q.account,
+      status: q.status,
+      ledgerMin: q.ledgerMin,
+      ledgerMax: q.ledgerMax,
+    });
+    let cursor: { ledgerSequence: number; id: string } | undefined;
+    if (q.cursor !== undefined) {
+      const decoded = decodeOpaqueCursor(q.cursor, scope);
+      if (
+        typeof decoded !== 'object' ||
+        decoded === null ||
+        !('ledgerSequence' in decoded) ||
+        typeof decoded.ledgerSequence !== 'number' ||
+        !('id' in decoded) ||
+        typeof decoded.id !== 'string'
+      ) {
+        throw new AppError(400, 'Invalid or mismatched cursor', 'INVALID_CURSOR');
+      }
+      cursor = { ledgerSequence: decoded.ledgerSequence, id: decoded.id };
+    }
+
+    const result = await transactionService.listTransactions({ ...q, cursor });
+    if ('nextCursor' in result && result.nextCursor) {
+      res.json({ ...result, nextCursor: encodeOpaqueCursor(result.nextCursor, scope) });
+      return;
+    }
     res.json(result);
   }),
 );
