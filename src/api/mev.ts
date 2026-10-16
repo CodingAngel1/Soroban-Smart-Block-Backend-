@@ -2130,7 +2130,7 @@ const predictionQuerySchema = z.object({
 
 /**
  * @swagger
- * /api/v1/mev/predictions:
+ * /mev/predictions:
  *   get:
  *     summary: Ranked forward-looking MEV predictions
  *     description: >
@@ -2221,7 +2221,7 @@ mevRouter.get(
 
 /**
  * @swagger
- * /api/v1/mev/predictions/config:
+ * /mev/predictions/config:
  *   get:
  *     summary: Prediction engine configuration
  *     description: Sensitivity presets, selectable signal types, and stream path.
@@ -2263,7 +2263,7 @@ mevRouter.get('/predictions/config', (_req: Request, res: Response) => {
 
 /**
  * @swagger
- * /api/v1/mev/predictions/pending:
+ * /mev/predictions/pending:
  *   get:
  *     summary: List buffered pending transactions
  *     description: Process-local buffer feeding the predictor, deduped by hash with a 2-minute TTL.
@@ -2296,7 +2296,7 @@ mevRouter.get('/predictions/pending', (_req: Request, res: Response) => {
 
 /**
  * @swagger
- * /api/v1/mev/predictions/pending:
+ * /mev/predictions/pending:
  *   delete:
  *     summary: Clear the pending transaction buffer
  *     tags: [MEV]
@@ -2348,7 +2348,7 @@ const ingestPredictionsSchema = z.object({
 
 /**
  * @swagger
- * /api/v1/mev/predictions/ingest:
+ * /mev/predictions/ingest:
  *   post:
  *     summary: Ingest pending transactions and score them
  *     description: >

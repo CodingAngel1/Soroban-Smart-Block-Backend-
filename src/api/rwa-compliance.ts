@@ -44,7 +44,7 @@ export const rwaReportTemplate = {
 
 /**
  * @swagger
- * /rwa-compliance:
+ * /compliance/rwa:
  *   get:
  *     summary: RWA compliance service overview
  *     tags: [RWA Compliance]
@@ -57,15 +57,15 @@ rwaComplianceRouter.get('/', (_req: Request, res: Response) => {
     service: 'RWA Compliance API',
     description: 'KYC/AML compliance and jurisdictional controls for tokenized real-world assets',
     endpoints: [
-      'GET  /rwa-compliance',
-      'GET  /rwa-compliance/assets',
-      'GET  /rwa-compliance/assets/:assetId',
-      'POST /rwa-compliance/assets/:assetId/check',
-      'GET  /rwa-compliance/holders/:address',
-      'POST /rwa-compliance/holders/:address/verify',
-      'GET  /rwa-compliance/jurisdictions',
-      'GET  /rwa-compliance/reports',
-      'POST /rwa-compliance/reports/schedule',
+      'GET  /compliance/rwa',
+      'GET  /compliance/rwa/assets',
+      'GET  /compliance/rwa/assets/:assetId',
+      'POST /compliance/rwa/assets/:assetId/check',
+      'GET  /compliance/rwa/holders/:address',
+      'POST /compliance/rwa/holders/:address/verify',
+      'GET  /compliance/rwa/jurisdictions',
+      'GET  /compliance/rwa/reports',
+      'POST /compliance/rwa/reports/schedule',
     ],
   });
 });
@@ -74,7 +74,7 @@ rwaComplianceRouter.get('/', (_req: Request, res: Response) => {
 
 /**
  * @swagger
- * /rwa-compliance/assets:
+ * /compliance/rwa/assets:
  *   get:
  *     summary: List RWA-compliant assets
  *     tags: [RWA Compliance]
@@ -91,7 +91,7 @@ rwaComplianceRouter.get('/assets', (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /rwa-compliance/assets/{assetId}:
+ * /compliance/rwa/assets/{assetId}:
  *   get:
  *     summary: Get compliance metadata for an RWA asset
  *     tags: [RWA Compliance]
@@ -122,7 +122,7 @@ rwaComplianceRouter.get('/assets/:assetId', (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /rwa-compliance/assets/{assetId}/check:
+ * /compliance/rwa/assets/{assetId}/check:
  *   post:
  *     summary: Check if a transfer is compliant for an RWA asset
  *     tags: [RWA Compliance]
@@ -179,7 +179,7 @@ rwaComplianceRouter.post('/assets/:assetId/check', (req: Request, res: Response)
 
 /**
  * @swagger
- * /rwa-compliance/holders/{address}:
+ * /compliance/rwa/holders/{address}:
  *   get:
  *     summary: Get compliance status for an asset holder
  *     tags: [RWA Compliance]
@@ -209,7 +209,7 @@ rwaComplianceRouter.get('/holders/:address', (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /rwa-compliance/holders/{address}/verify:
+ * /compliance/rwa/holders/{address}/verify:
  *   post:
  *     summary: Submit KYC/AML verification for a holder
  *     tags: [RWA Compliance]
@@ -260,7 +260,7 @@ rwaComplianceRouter.post('/holders/:address/verify', (req: Request, res: Respons
 
 /**
  * @swagger
- * /rwa-compliance/jurisdictions:
+ * /compliance/rwa/jurisdictions:
  *   get:
  *     summary: List supported jurisdictions and their compliance requirements
  *     tags: [RWA Compliance]
@@ -298,7 +298,7 @@ rwaComplianceRouter.get('/jurisdictions', (_req: Request, res: Response) => {
 
 /**
  * @swagger
- * /rwa-compliance/reports:
+ * /compliance/rwa/reports:
  *   get:
  *     summary: Get regulatory compliance reports
  *     tags: [RWA Compliance]
@@ -321,7 +321,7 @@ rwaComplianceRouter.get('/reports', (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /rwa-compliance/reports/schedule:
+ * /compliance/rwa/reports/schedule:
  *   post:
  *     summary: Schedule recurring RWA compliance report generation and delivery
  *     tags: [RWA Compliance]
