@@ -7,11 +7,14 @@ import {
   rpcCallDuration,
   rpcCallErrorsTotal,
   rpcCallRetriesTotal,
+  rpcEndpointActive,
+  rpcEndpointFailoversTotal,
   horizonCallDuration,
   horizonCallErrorsTotal,
-} from '../metrics';
+} from './rpc-metrics';
 
 const isDevnet = config.profile.name === 'devnet';
+const networkName = config.stellarNetwork ?? config.profile.name;
 
 // Reject plain-HTTP RPC URLs in non-devnet environments at startup.
 if (!isDevnet && config.stellarRpcUrl.startsWith('http://')) {
@@ -21,7 +24,96 @@ if (!isDevnet && config.stellarRpcUrl.startsWith('http://')) {
   );
 }
 
-export const rpc = new SorobanRpc.Server(config.stellarRpcUrl, { allowHttp: isDevnet });
+const rpcUrls = [...new Set([config.stellarRpcUrl, ...(config.profile.rpcFallbackUrls ?? [])])];
+const rpcServers = rpcUrls.map((url) => new SorobanRpc.Server(url, { allowHttp: isDevnet }));
+let activeRpcEndpoint = 0;
+
+function endpointLabel(index: number): string {
+  return index === 0 ? 'primary' : `fallback_${index}`;
+}
+
+function setActiveRpcEndpoint(index: number): void {
+  activeRpcEndpoint = index;
+  rpcServers.forEach((_, endpointIndex) => {
+    rpcEndpointActive.set(
+      { network: networkName, endpoint: endpointLabel(endpointIndex) },
+      endpointIndex === index ? 1 : 0,
+    );
+  });
+}
+
+function isFailoverEligible(error: unknown): boolean {
+  const axiosError = error as AxiosError | undefined;
+  const status = axiosError?.response?.status ?? getStatus(error);
+  if (status !== undefined) return status === 429 || status >= 500;
+
+  const code =
+    error && typeof error === 'object' && 'code' in error
+      ? String((error as { code: unknown }).code)
+      : '';
+  return (
+    [
+      'ECONNABORTED',
+      'ECONNREFUSED',
+      'ECONNRESET',
+      'EHOSTUNREACH',
+      'ENETUNREACH',
+      'ETIMEDOUT',
+    ].includes(code) ||
+    /fetch failed|network|timeout|socket|connection|unavailable/i.test(getMessage(error))
+  );
+}
+
+async function callRpcWithFailover<T>(methodName: PropertyKey, args: unknown[]): Promise<T> {
+  const firstIndex = activeRpcEndpoint;
+  let lastError: unknown;
+
+  for (let offset = 0; offset < rpcServers.length; offset += 1) {
+    const endpointIndex = (firstIndex + offset) % rpcServers.length;
+    const server = rpcServers[endpointIndex];
+    const method = Reflect.get(server, methodName, server);
+    if (typeof method !== 'function') {
+      throw new Error(`Stellar RPC method "${String(methodName)}" is unavailable`);
+    }
+
+    try {
+      return (await Reflect.apply(method, server, args)) as T;
+    } catch (error) {
+      lastError = error;
+      if (!isFailoverEligible(error) || offset === rpcServers.length - 1) {
+        throw error;
+      }
+
+      const nextIndex = (endpointIndex + 1) % rpcServers.length;
+      rpcEndpointFailoversTotal.inc({
+        network: networkName,
+        from_endpoint: endpointLabel(endpointIndex),
+        to_endpoint: endpointLabel(nextIndex),
+      });
+      logger.warn(
+        `[rpc] endpoint ${endpointLabel(endpointIndex)} failed; trying ${endpointLabel(nextIndex)}`,
+        { method: String(methodName), status: getStatus(error) },
+      );
+      setActiveRpcEndpoint(nextIndex);
+    }
+  }
+
+  throw lastError;
+}
+
+setActiveRpcEndpoint(activeRpcEndpoint);
+
+export const rpc = new Proxy(rpcServers[0], {
+  get(_target, property) {
+    const method = Reflect.get(
+      rpcServers[activeRpcEndpoint],
+      property,
+      rpcServers[activeRpcEndpoint],
+    );
+    if (typeof method !== 'function') return method;
+    return (...args: unknown[]) => callRpcWithFailover(property, args);
+  },
+});
 
 export interface LedgerEvent {
   contractId: string;
@@ -44,8 +136,14 @@ function sleep(ms: number) {
 }
 
 function getStatus(error: unknown): number | undefined {
-  if (error && typeof error === 'object' && 'status' in error) {
-    return (error as { status: number }).status;
+  if (error && typeof error === 'object') {
+    if ('status' in error && typeof (error as { status: unknown }).status === 'number') {
+      return (error as { status: number }).status;
+    }
+    if ('response' in error && error.response && typeof error.response === 'object') {
+      const status = (error.response as { status?: unknown }).status;
+      if (typeof status === 'number') return status;
+    }
   }
   return undefined;
 }
@@ -75,12 +173,18 @@ async function retry<T>(operation: string, fn: () => Promise<T>): Promise<T> {
     const startTime = Date.now();
     try {
       const result = await fn();
-      rpcCallDuration.observe({ operation, status: 'success' }, (Date.now() - startTime) / 1000);
+      rpcCallDuration.observe(
+        { network: networkName, operation, status: 'success' },
+        (Date.now() - startTime) / 1000,
+      );
       return result;
     } catch (error: unknown) {
-      rpcCallDuration.observe({ operation, status: 'error' }, (Date.now() - startTime) / 1000);
+      rpcCallDuration.observe(
+        { network: networkName, operation, status: 'error' },
+        (Date.now() - startTime) / 1000,
+      );
       const type = isRateLimitError(error) ? 'rate_limit' : 'error';
-      rpcCallErrorsTotal.inc({ operation, type });
+      rpcCallErrorsTotal.inc({ network: networkName, operation, type });
 
       if (!isRateLimitError(error) || attempt >= MAX_RETRY_ATTEMPTS) {
         throw error;
@@ -89,7 +193,7 @@ async function retry<T>(operation: string, fn: () => Promise<T>): Promise<T> {
       const backoff = Math.min(16000, 500 * 2 ** attempt);
       const jitter = Math.floor(Math.random() * 300);
       attempt += 1;
-      rpcCallRetriesTotal.inc({ operation });
+      rpcCallRetriesTotal.inc({ network: networkName, operation });
       logger.warn(`RPC rate limit hit, retrying in ${backoff + jitter}ms (attempt ${attempt})`);
       await sleep(backoff + jitter);
     }

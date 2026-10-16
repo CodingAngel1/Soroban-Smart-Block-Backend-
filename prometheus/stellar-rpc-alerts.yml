@@ -1,0 +1,37 @@
+groups:
+  - name: soroban_explorer_stellar_rpc
+    interval: 30s
+    rules:
+      - record: stellar_rpc:error_ratio:rate5m
+        expr: |
+          sum by (network) (rate(rpc_call_duration_seconds_count{status="error"}[5m]))
+          /
+          clamp_min(sum by (network) (rate(rpc_call_duration_seconds_count[5m])), 1e-9)
+
+      - alert: StellarRpcSustainedDegradation
+        expr: stellar_rpc:error_ratio:rate5m > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: 'Stellar RPC error rate is elevated on {{ $labels.instance }}'
+          description: >
+            More than 10% of instrumented Stellar RPC calls have failed for five
+            minutes on network {{ $labels.network }}. Check provider status,
+            endpoint failover activity, and network-specific RPC credentials.
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/stellar-rpc-failover.md'
+
+      - alert: StellarRpcEndpointFailover
+        expr: increase(rpc_endpoint_failovers_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: 'Stellar RPC endpoint failover observed on {{ $labels.instance }}'
+          description: >
+            A call on {{ $labels.network }} failed at {{ $labels.from_endpoint }}
+            and transitioned to {{ $labels.to_endpoint }}. Verify the primary
+            provider and confirm the fallback is appropriate for this network.
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/stellar-rpc-failover.md'
