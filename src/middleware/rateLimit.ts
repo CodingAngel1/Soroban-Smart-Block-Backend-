@@ -151,7 +151,7 @@ export function getRateLimitTier(
 }
 
 function getTierFromEnvKey(apiKey: string | undefined): RateLimitTier {
-  if (!apiKey) return 'free';
+  if (!apiKey) return 'unauthenticated';
   const hashed = hashApiKey(apiKey);
   if (premiumKeys.has(hashed)) return 'pro';
   if (developerKeys.has(hashed)) return 'developer';
@@ -190,6 +190,16 @@ function getRequestBucketKey(req: Request, tier: TierName, userIdentifier?: stri
   // independently (#894) so one client can't forge a bucket key that
   // collides with a different client's or a different endpoint's bucket.
   return buildCacheKey(tier, keySource, endpoint);
+}
+
+function toLegacyTier(tier: RateLimitTier): TierName {
+  return tier === 'enterprise'
+    ? 'enterprise'
+    : tier === 'pro'
+      ? 'premium'
+      : tier === 'developer'
+        ? 'developer'
+        : 'free';
 }
 
 async function getUserOverride(identifier: string, endpoint: string): Promise<TierConfig | null> {
@@ -322,17 +332,31 @@ export async function initRateLimitStore(): Promise<void> {
   }
 }
 
-function runLocalRateLimit(req: Request, res: Response, next: NextFunction): void {
+function runLocalRateLimit(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  keyCtx?: NonNullable<Request['apiKey']>,
+): void {
   void (async () => {
     const apiKey = req.headers['x-api-key'] as string | undefined;
-    const tier = getRateLimitTier(apiKey);
+    const tier = keyCtx ? toLegacyTier(keyCtx.tier) : getRateLimitTier(apiKey);
     const userIdentifier = req.headers['x-user-id'] as string | undefined;
+    const bucketIdentifier = keyCtx?.id ?? userIdentifier;
     const endpoint = req.path || req.originalUrl || '/';
     const configOverride = userIdentifier ? await getUserOverride(userIdentifier, endpoint) : null;
-    const baseConfig = configOverride ?? normalizeTierConfig()[tier];
+    const tierConfig = normalizeTierConfig()[tier];
+    const keyOverride =
+      keyCtx?.rateLimitOverride === undefined
+        ? tierConfig
+        : {
+            windowMs: tierConfig.windowMs,
+            max: sanitizeTierValue(keyCtx.rateLimitOverride, tierConfig.max),
+          };
+    const baseConfig = configOverride ?? keyOverride;
     const effectiveConfig = applyAdaptiveThrottle(req, res, baseConfig);
     const now = Date.now();
-    const bucketKey = getRequestBucketKey(req, tier, userIdentifier);
+    const bucketKey = getRequestBucketKey(req, tier, bucketIdentifier);
     const existing = requestBuckets.get(bucketKey);
 
     if (!existing || existing.resetAt <= now) {
@@ -385,7 +409,7 @@ export async function tieredRateLimit(
   const tier: RateLimitTier = keyCtx?.tier ?? getTierFromEnvKey(rawKey);
   const clientKey = keyCtx?.id ?? req.ip ?? 'anonymous';
 
-  if (useTokenBucket) {
+  if (useTokenBucket || tier === 'unauthenticated') {
     try {
       const result: TokenBucketResult = await checkTokenBucket(
         clientKey,
@@ -423,21 +447,18 @@ export async function tieredRateLimit(
       return;
     } catch (err) {
       logger.warn(`[rate-limit] Token bucket error, falling through: ${String(err)}`);
+      if (tier === 'unauthenticated') {
+        next(err);
+        return;
+      }
     }
   }
 
   if (keyCtx?.rateLimitOverride) {
-    runLocalRateLimit(req, res, next);
+    runLocalRateLimit(req, res, next, keyCtx);
     return;
   }
 
-  const legacyTier: TierName =
-    tier === 'enterprise'
-      ? 'enterprise'
-      : tier === 'pro'
-        ? 'premium'
-        : tier === 'developer'
-          ? 'developer'
-          : 'free';
+  const legacyTier = toLegacyTier(tier);
   legacyLimiters[legacyTier](req, res, next);
 }

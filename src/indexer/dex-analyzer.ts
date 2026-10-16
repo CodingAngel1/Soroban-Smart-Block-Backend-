@@ -14,6 +14,7 @@
  */
 
 import { prismaRead as prisma } from '../db';
+import { config } from '../config';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -353,7 +354,7 @@ function serializeBigInts<T>(obj: T): T {
 /** Analyze a single transaction by hash. */
 export async function analyzeTransaction(txHash: string) {
   const tx = await prisma.transaction.findUnique({
-    where: { hash: txHash },
+    where: { network_hash: { network: config.stellarNetwork, hash: txHash } },
     include: { events: true },
   });
   if (!tx) return null;

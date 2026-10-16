@@ -142,6 +142,28 @@ describe('startup validation — network profile consistency', () => {
     const p = getProfile('mainnet');
     expect(p.name).toBe('mainnet');
   });
+
+  it('rejects a testnet passphrase configured for mainnet', async () => {
+    vi.stubEnv('MAINNET_DATABASE_URL', 'postgresql://mainnet-db/soroban');
+    vi.stubEnv('MAINNET_RPC_URL', 'https://mainnet.example.com/rpc');
+    vi.stubEnv('MAINNET_RPC_WS_URL', 'wss://mainnet.example.com/rpc');
+    vi.stubEnv('MAINNET_PASSPHRASE', 'Test SDF Network ; September 2015');
+    const { getProfile } = await loadProfiles();
+    expect(() => getProfile('mainnet')).toThrow(/canonical mainnet network passphrase/);
+  });
+
+  it('rejects a non-canonical passphrase on each supported network', async () => {
+    vi.stubEnv('TESTNET_DATABASE_URL', 'postgresql://testnet-db/soroban');
+    vi.stubEnv('MAINNET_DATABASE_URL', 'postgresql://mainnet-db/soroban');
+    vi.stubEnv('MAINNET_RPC_URL', 'https://mainnet.example.com/rpc');
+    vi.stubEnv('MAINNET_RPC_WS_URL', 'wss://mainnet.example.com/rpc');
+    const { allProfiles, validateProfile } = await loadProfiles();
+    for (const profile of Object.values(allProfiles)) {
+      expect(() =>
+        validateProfile({ ...profile, networkPassphrase: 'wrong network passphrase' }),
+      ).toThrow(new RegExp(`canonical ${profile.name} network passphrase`));
+    }
+  });
 });
 
 // ── validateProfile exported directly ────────────────────────────────────────
@@ -168,6 +190,7 @@ describe('startup validation — validateProfile helper', () => {
       name: 'mainnet' as const,
       databaseUrl: '',
       rpcUrl: 'https://ok.example.com',
+      rpcFallbackUrls: [],
       rpcWsUrl: 'wss://ok.example.com',
       horizonUrl: 'https://horizon.stellar.org',
       readReplicaUrl: '',

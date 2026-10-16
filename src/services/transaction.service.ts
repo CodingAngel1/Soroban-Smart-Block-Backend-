@@ -7,9 +7,16 @@ import {
   transactionRepository,
 } from '../repositories/transaction.repository';
 import { getBn254ExemptionByTx } from '../indexer/bn254-tracker';
+import {
+  decodeStableCursor,
+  encodeStableCursor,
+  InvalidCursorError,
+  type CursorPage,
+} from '../utils/stable-cursor';
 
 export interface TransactionListFilter {
-  cursor?: number;
+  cursor?: number | string;
+  pagination?: 'cursor';
   page?: number;
   limit?: number;
   contract?: string;
@@ -33,6 +40,8 @@ export interface OffsetPaginatedTransactions {
   pages: number;
 }
 
+export type StableCursorTransactions = CursorPage<any>;
+
 export class TransactionService {
   constructor(private readonly repo: TransactionRepository = transactionRepository) {}
 
@@ -53,13 +62,49 @@ export class TransactionService {
 
   async listTransactions(
     query: TransactionListFilter,
-  ): Promise<CursorPaginatedTransactions | OffsetPaginatedTransactions> {
+  ): Promise<CursorPaginatedTransactions | OffsetPaginatedTransactions | StableCursorTransactions> {
     const limit = query.limit ?? 20;
     const where = this.buildFilterWhere(query);
 
+    if (query.pagination === 'cursor') {
+      if (query.cursor !== undefined && typeof query.cursor !== 'string') {
+        throw new InvalidCursorError();
+      }
+      const after =
+        typeof query.cursor === 'string'
+          ? decodeStableCursor(query.cursor, 'transactions')
+          : undefined;
+      const rows = await this.repo.findMany({
+        where,
+        take: limit + 1,
+        after,
+        includeCursorId: true,
+      });
+
+      const hasNext = rows.length > limit;
+      const pageRows = hasNext ? rows.slice(0, limit) : rows;
+      const data = pageRows.map(
+        ({ id: _id, ...row }: { id: string; [key: string]: unknown }) => row,
+      );
+      const lastRow = pageRows[pageRows.length - 1];
+      const nextCursor =
+        hasNext && lastRow
+          ? encodeStableCursor('transactions', {
+              ledgerSequence: lastRow.ledgerSequence,
+              id: lastRow.id,
+            })
+          : null;
+
+      return { data, nextCursor, hasNext };
+    }
+
     if (query.cursor !== undefined) {
+      const cursor = typeof query.cursor === 'number' ? query.cursor : Number(query.cursor);
+      if (!Number.isSafeInteger(cursor) || cursor < 0) {
+        throw new InvalidCursorError();
+      }
       // Cursor-based pagination (descending ledgerSequence)
-      where.ledgerSequence = { ...where.ledgerSequence, lt: query.cursor };
+      where.ledgerSequence = { ...where.ledgerSequence, lt: cursor };
 
       const rows = await this.repo.findMany({
         where,
@@ -104,6 +149,10 @@ export class TransactionService {
       ...tx,
       ...(bn254GasExemption ? { bn254GasExemption } : {}),
     };
+  }
+
+  async getRawXdrByHash(hash: string): Promise<{ hash: string; rawXdr: string } | null> {
+    return this.repo.findRawXdrByHash(hash);
   }
 }
 

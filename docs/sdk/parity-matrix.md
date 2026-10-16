@@ -2,7 +2,7 @@
 
 # SDK Route Parity Matrix
 
-Every operation in `/api/v1/openapi.json` (494 operations) and how each
+Every operation in `/api/v1/openapi.json` (506 operations) and how each
 first-party client exposes it. "`call`" means the generated, fully typed
 `client.call('<operationId>', …)`; named methods are curated conveniences over
 the same call.
@@ -13,6 +13,10 @@ by `client.realtime` in TypeScript and `client.stream_feed()` in Python.
 
 | Operation | Method | Path | TypeScript | Python |
 |-----------|--------|------|------------|--------|
+| `getAdminContractAbiSubmissions` | GET | `/admin/contract-abi-submissions` | ✅ `call` | ✅ `call` |
+| `postAdminContractAbiSubmissionsByIdApprove` | POST | `/admin/contract-abi-submissions/{id}/approve` | ✅ `call` | ✅ `call` |
+| `postAdminContractAbiSubmissionsByIdPublish` | POST | `/admin/contract-abi-submissions/{id}/publish` | ✅ `call` | ✅ `call` |
+| `postAdminContractAbiSubmissionsByIdReject` | POST | `/admin/contract-abi-submissions/{id}/reject` | ✅ `call` | ✅ `call` |
 | `getAdvancedEvents` | GET | `/advanced-events` | ✅ `call` | ✅ `call` |
 | `getAdvancedEventsAggregations` | GET | `/advanced-events/aggregations` | ✅ `call` | ✅ `call` |
 | `getAdvancedEventsContractsByContractId` | GET | `/advanced-events/contracts/{contractId}` | ✅ `call` | ✅ `call` |
@@ -69,6 +73,8 @@ by `client.realtime` in TypeScript and `client.stream_feed()` in Python.
 | `getCompilerMetrics` | GET | `/compiler/metrics` | ✅ `call` | ✅ `call` |
 | `getCompilerToolchains` | GET | `/compiler/toolchains` | ✅ `call` | ✅ `call` |
 | `postCompilerVerify` | POST | `/compiler/verify` | ✅ `call` | ✅ `call` |
+| `getComplianceTokenLabelsByTokenId` | GET | `/compliance/token-labels/{tokenId}` | ✅ `call` | ✅ `call` |
+| `putComplianceTokenLabelsByTokenId` | PUT | `/compliance/token-labels/{tokenId}` | ✅ `call` | ✅ `call` |
 | `postComposabilityAlerts` | POST | `/composability/alerts` | ✅ `call` | ✅ `call` |
 | `postComposabilityAnalyze` | POST | `/composability/analyze` | ✅ `call` | ✅ `call` |
 | `postComposabilityAnalyzeBatch` | POST | `/composability/analyze/batch` | ✅ `call` | ✅ `call` |
@@ -104,6 +110,10 @@ by `client.realtime` in TypeScript and `client.stream_feed()` in Python.
 | `postContracts` | POST | `/contracts` | ✅ `call` | ✅ `call` |
 | `getContractsByAddress` | GET | `/contracts/{address}` | ✅ `client.contracts.get(address)` | ✅ `client.contracts.get(address)` |
 | `getContractsByAddressStats` | GET | `/contracts/{address}/stats` | ✅ `call` | ✅ `call` |
+| `postContractsAbiSubmissions` | POST | `/contracts/abi-submissions` | ✅ `call` | ✅ `call` |
+| `getContractsLicenses` | GET | `/contracts/licenses` | ✅ `call` | ✅ `call` |
+| `getContractsLicensesByContractId` | GET | `/contracts/licenses/{contractId}` | ✅ `call` | ✅ `call` |
+| `putContractsLicensesByContractId` | PUT | `/contracts/licenses/{contractId}` | ✅ `call` | ✅ `call` |
 | `getEvents` | GET | `/events` | ✅ `client.events.list()` | ✅ `client.events.list()` |
 | `getEventsById` | GET | `/events/{id}` | ✅ `client.events.get(id)` | ✅ `client.events.get(id)` |
 | `getFactoryTracker` | GET | `/factory-tracker` | ✅ `call` | ✅ `call` |
@@ -117,6 +127,7 @@ by `client.realtime` in TypeScript and `client.stream_feed()` in Python.
 | `getGraphDependencies` | GET | `/graph/dependencies` | ✅ `call` | ✅ `call` |
 | `getGraphDependenciesSvg` | GET | `/graph/dependencies/svg` | ✅ `call` | ✅ `call` |
 | `getGraphExplorer` | GET | `/graph/explorer` | ✅ `call` | ✅ `call` |
+| `postGraphQuery` | POST | `/graph/query` | ✅ `call` | ✅ `call` |
 | `postGraphTemplatesCommunityDetection` | POST | `/graph/templates/community-detection` | ✅ `call` | ✅ `call` |
 | `postGraphTemplatesContractCalls` | POST | `/graph/templates/contract-calls` | ✅ `call` | ✅ `call` |
 | `postGraphTemplatesInfluence` | POST | `/graph/templates/influence` | ✅ `call` | ✅ `call` |
@@ -316,6 +327,7 @@ by `client.realtime` in TypeScript and `client.stream_feed()` in Python.
 | `postRwaComplianceHoldersByAddressVerify` | POST | `/rwa-compliance/holders/{address}/verify` | ✅ `call` | ✅ `call` |
 | `getRwaComplianceJurisdictions` | GET | `/rwa-compliance/jurisdictions` | ✅ `call` | ✅ `call` |
 | `getRwaComplianceReports` | GET | `/rwa-compliance/reports` | ✅ `call` | ✅ `call` |
+| `postRwaComplianceReportsSchedule` | POST | `/rwa-compliance/reports/schedule` | ✅ `call` | ✅ `call` |
 | `getSacTrustlines` | GET | `/sac-trustlines` | ✅ `call` | ✅ `call` |
 | `getSacTrustlinesAccountsByAddress` | GET | `/sac-trustlines/accounts/{address}` | ✅ `call` | ✅ `call` |
 | `getSacTrustlinesAccountsByAddressAuthorized` | GET | `/sac-trustlines/accounts/{address}/authorized` | ✅ `call` | ✅ `call` |

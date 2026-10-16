@@ -1,4 +1,5 @@
 import { prismaWrite as prisma } from '../db';
+import { config } from '../config';
 import { uuidv7 } from '../utils/uuidv7';
 
 export class FeatureStore {
@@ -8,27 +9,33 @@ export class FeatureStore {
    * Computes derived features for the latest block from actual indexed data.
    */
   public async computeAndStoreFeatures(ledgerSequence: number, closeTime: Date) {
-    const ledger = await prisma.ledger.findUnique({ where: { sequence: ledgerSequence } });
+    const network = config.stellarNetwork;
+    const ledger = await prisma.ledger.findUnique({
+      where: { network_sequence: { network, sequence: ledgerSequence } },
+    });
     const txCount = ledger?.txCount ?? 0;
 
     const [txVolume, uniqueSourceAccounts, contractsWithEvents, failedTxs] = await Promise.all([
-      prisma.transaction.count({ where: { ledgerSequence } }),
+      prisma.transaction.count({ where: { network, ledgerSequence } }),
       prisma.transaction.findMany({
-        where: { ledgerSequence },
+        where: { network, ledgerSequence },
         select: { sourceAccount: true },
         distinct: ['sourceAccount'],
       }),
       prisma.event.findMany({
-        where: { ledgerSequence },
+        where: { network, ledgerSequence },
         select: { contractAddress: true },
         distinct: ['contractAddress'],
       }),
-      prisma.transaction.count({ where: { ledgerSequence, status: { not: 'success' } } }),
+      prisma.transaction.count({ where: { network, ledgerSequence, status: { not: 'success' } } }),
     ]);
 
     const failureRatio = txCount > 0 ? Number((failedTxs / txCount).toFixed(6)) : 0;
 
-    const latestLedger = await prisma.ledger.findFirst({ orderBy: { sequence: 'desc' } });
+    const latestLedger = await prisma.ledger.findFirst({
+      where: { network },
+      orderBy: { sequence: 'desc' },
+    });
     const freshnessSeconds = latestLedger
       ? Number(((closeTime.getTime() - latestLedger.closeTime.getTime()) / 1000).toFixed(3))
       : 0;

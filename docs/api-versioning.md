@@ -4,13 +4,9 @@ This document outlines the API versioning strategy, Accept-Version header negoti
 
 ## Versioning Strategy
 
-The API supports two methods of versioning:
-1. **Path-Based Versioning**: Routes are mounted under `/api/v1`.
-2. **Header-Based Version Negotiation**: Clients can request specific versions via the `Accept-Version` HTTP header (e.g., `Accept-Version: v1`, `Accept-Version: 1.0`, or `Accept-Version: 1.x`).
+REST endpoints are mounted under `/api/v1`. The `Accept-Version` header negotiates the version within that mounted API (for example, `v1`, `1.0`, or `1.x`); if omitted, the middleware selects `v1`. The middleware does not rewrite unversioned `/api/*` paths. A request that selects an unsupported version (for example, `v2`) receives `406 Not Acceptable`.
 
-If the request path does not explicitly start with `/v1/`, the versioning middleware negotiates the version based on the `Accept-Version` header (defaulting to `v1`) and rewrites the path internally to route it to the appropriate versioned router.
-
-If a client requests an unsupported API version (e.g. `v2`), the server will reject the request with status code `406 Not Acceptable`.
+The registry currently contains only active `v1`. Health and operational routes mounted outside `/api/v1` (such as `/healthz`, `/readyz`, and `/status`) are not part of the versioned REST API.
 
 ## Response Headers
 
@@ -40,6 +36,21 @@ To allow the platform to evolve while supporting existing integrations, versions
 ## Version Registry
 
 Supported versions live in `API_VERSIONS` in `src/middleware/versioning.ts` (`active`, `deprecated` with a `sunset` date, or `retired`). `versioningMiddleware` is mounted on `/api/v1`; `Deprecation`, `Sunset` and `Link` headers are emitted only for versions marked `deprecated`. `v1` is currently `active`.
+
+## Endpoint-Family Compatibility Matrix
+
+The following matrix describes the currently supported REST families. All listed paths are served as `/api/v1` paths and currently share the active `v1` lifecycle. The family groupings are for compatibility planning; each endpoint's OpenAPI operation remains authoritative for its exact fields, validation, and status codes.
+
+| Family | Representative paths | Compatibility notes |
+| --- | --- | --- |
+| Indexed chain data | `/transactions`, `/events`, `/contracts`, `/tokens`, `/wallets/*`, `/stellar/*`, `/token-metadata/*` | `/transactions` and `/events` offer the shared opt-in cursor contract (`?pagination=cursor&limit=20`, then pass `nextCursor` as `cursor`). Legacy offset and endpoint-specific cursor forms remain available for compatibility. New cursor pages return `{ data, nextCursor, hasNext }`; changing field types, ordering guarantees, or cursor semantics is breaking. See [Stable Cursor Pagination](cursor-pagination.md). |
+| Search and analysis | `/search/*`, `/analytics/*`, `/dex*`, `/market/*`, `/portfolio/*`, `/nft/*`, `/gas/*`, `/oracles/*` | Query filters are endpoint-specific. New optional filters and additive result fields are compatible; existing filter meanings and result types must remain stable. |
+| Batch and execution | `/batch/*`, `/simulate/*`, `/verify/*`, `/compiler/*`, `/sandbox/*`, `/aa/*` | Batch payload/result shapes are operation-specific. Simulation, verification, compilation, and account-abstraction operations may have additional API-key or developer-tier requirements; do not infer access from the family name. |
+| Account and protocol operations | `/authorizations/*`, `/protocol/*`, `/compliance/*`, `/bridge-tracker/*`, `/zkp-verifications/*` | Protocol-specific fields and validation remain endpoint-specific. Changes to network-specific interpretation or required inputs require explicit compatibility notes. |
+| Developer and administration | `/developer/*`, `/admin/*`, `/freeze/*`, `/webhooks/*` | Authentication and authorization requirements vary by operation. Security-sensitive write routes retain their existing guards; the API version does not imply public access. |
+| Streaming | `/feed/*`, `/realtime/*` | Streaming event schemas are versioned with the API family that serves them; consumers must tolerate additive event fields and preserve handling of existing event types. |
+
+For the full path/method/schema inventory, use the generated OpenAPI document at `/api/v1/openapi.json` or the interactive `/api/docs`. This matrix is a compatibility summary, not a substitute for operation-level documentation.
 
 ## No Breaking Changes Within a Version
 
