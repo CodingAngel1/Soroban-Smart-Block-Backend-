@@ -1,4 +1,5 @@
 import { prismaRead } from '../db';
+import { config } from '../config';
 import { logger } from '../logger';
 import { computeIndexHashFromRaw } from './index-hash';
 import { getCachedQueryResult, setCachedQueryResult } from './distributed-cache';
@@ -42,18 +43,20 @@ function maybeCorruptForTesting(ledgerSeq: number, hash: string): string {
 
 /** Exposed for challenge-scheduler.ts, which only needs the hash, not the rows. */
 export async function computeLocalIndexHash(ledgerSeq: number): Promise<string | null> {
-  const local = await loadLocal(ledgerSeq, false);
+  const local = await loadLocal(ledgerSeq, false, config.stellarNetwork);
   return local?.indexHash ?? null;
 }
 
-async function loadLocal(ledgerSeq: number, includeEvents: boolean) {
-  const ledger = await prismaRead.ledger.findUnique({ where: { sequence: ledgerSeq } });
+async function loadLocal(ledgerSeq: number, includeEvents: boolean, network: string) {
+  const ledger = await prismaRead.ledger.findUnique({
+    where: { network_sequence: { network, sequence: ledgerSeq } },
+  });
   if (!ledger) return null;
   const transactions = await prismaRead.transaction.findMany({
-    where: { ledgerSequence: ledgerSeq },
+    where: { network, ledgerSequence: ledgerSeq },
   });
   const events = includeEvents
-    ? await prismaRead.event.findMany({ where: { ledgerSequence: ledgerSeq } })
+    ? await prismaRead.event.findMany({ where: { network, ledgerSequence: ledgerSeq } })
     : [];
   let indexHash = computeIndexHashFromRaw(
     ledger.hash,
@@ -78,7 +81,7 @@ export async function resolveLedgerLocation(
 ): Promise<QueryLedgerResponseMessage> {
   const selfPeerId = getSelfPeerId() ?? 'local';
 
-  const local = await loadLocal(ledgerSeq, includeEvents);
+  const local = await loadLocal(ledgerSeq, includeEvents, network);
   if (local) {
     return {
       v: 1,
@@ -131,7 +134,7 @@ export async function resolveLedgerLocation(
       ledgerSeq,
     });
     await onTheFlyIndexer(ledgerSeq);
-    const afterIndex = await loadLocal(ledgerSeq, includeEvents);
+    const afterIndex = await loadLocal(ledgerSeq, includeEvents, network);
     if (afterIndex) {
       return {
         v: 1,

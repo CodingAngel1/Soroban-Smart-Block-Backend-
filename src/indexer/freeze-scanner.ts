@@ -10,6 +10,7 @@
  */
 import { xdr } from '@stellar/stellar-sdk';
 import { prismaWrite as prisma } from '../db';
+import { config } from '../config';
 import { logger } from '../logger';
 import { safePost, SsrfBlockedError } from '../webhooks/ssrf-guard';
 import { freezeIncidentChannel, FreezeSeverity } from './freeze-incident-channel';
@@ -127,7 +128,7 @@ export async function recordFreezeViolation(
       },
     }),
     prisma.transaction.updateMany({
-      where: { hash: transactionHash },
+      where: { network: config.stellarNetwork, hash: transactionHash },
       data: { status: 'freeze_flagged' },
     }),
   ]);

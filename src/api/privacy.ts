@@ -2,6 +2,7 @@
 
 import { Router, Request, Response } from 'express';
 import { prismaRead, prismaWrite } from '../db';
+import { config } from '../config';
 import { z } from 'zod';
 import { detectPrivacyTechniques } from '../indexer/privacy-detector';
 import { computePrivacyScore } from '../indexer/privacy-scorer';
@@ -614,7 +615,9 @@ privacyRouter.get(
       }
 
       const baseTx = await prismaRead.transaction.findUnique({
-        where: { hash: req.params.txHash },
+        where: {
+          network_hash: { network: config.stellarNetwork, hash: req.params.txHash },
+        },
       });
 
       const findings = await prismaRead.deAnonymizationFinding.findMany({

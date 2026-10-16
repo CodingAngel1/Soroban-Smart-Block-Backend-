@@ -113,6 +113,7 @@ export function decodeEvent(
       event: rawSymbol,
       topics: topicVals.map((t) => scValToNative(t)),
       data: scValToNative(dataVal),
+      raw: { topics, data },
     };
 
     return { eventType: normalizeEventType(rawSymbol), topicSymbol: rawSymbol, decoded };

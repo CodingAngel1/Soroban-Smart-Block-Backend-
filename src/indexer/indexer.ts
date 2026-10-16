@@ -258,6 +258,7 @@ export async function releaseLeaderLease(
 }
 
 export async function rollbackLedgers(sequences: number[]) {
+  const network = getActiveNetwork();
   logger.info(`⚠️ Rollback triggered for ledgers: ${sequences.join(', ')}`);
 
   await prismaWrite.$transaction([
@@ -271,6 +272,7 @@ export async function rollbackLedgers(sequences: number[]) {
     // Delete Events for these ledgers
     prismaWrite.event.deleteMany({
       where: {
+        network,
         ledgerSequence: { in: sequences },
       },
     }),
@@ -278,6 +280,7 @@ export async function rollbackLedgers(sequences: number[]) {
     // Delete Transactions for these ledgers
     prismaWrite.transaction.deleteMany({
       where: {
+        network,
         ledgerSequence: { in: sequences },
       },
     }),
@@ -292,6 +295,7 @@ export async function rollbackLedgers(sequences: number[]) {
     // Delete Ledgers themselves
     prismaWrite.ledger.deleteMany({
       where: {
+        network,
         sequence: { in: sequences },
       },
     }),
@@ -371,7 +375,9 @@ async function processLedgerRangeInternal(
 
     // Deep Reorg Check & Extended Backtracking
     const prevSeq = seq - 1;
-    const prevLedger = await prismaRead.ledger.findUnique({ where: { sequence: prevSeq } });
+    const prevLedger = await prismaRead.ledger.findUnique({
+      where: { network_sequence: { network, sequence: prevSeq } },
+    });
 
     if (prevLedger && prevLedger.hash !== ledgerMeta.previousLedgerHash) {
       logger.warn(
@@ -390,7 +396,7 @@ async function processLedgerRangeInternal(
         if (checkSeq <= 0) break;
 
         const localCheckLedger = await prismaRead.ledger.findUnique({
-          where: { sequence: checkSeq },
+          where: { network_sequence: { network, sequence: checkSeq } },
         });
         if (!localCheckLedger) break;
 
@@ -485,6 +491,19 @@ async function processLedgerRangeInternal(
     () => fetchEvents(start, end),
   );
   stopEventsFetchTimer();
+  const legacyEventIds = events.map(
+    (event, index) =>
+      `${event.transactionHash}-${event.pagingToken || `${event.ledgerSequence}-${index}`}`,
+  );
+  const existingLegacyEvents = legacyEventIds.length
+    ? await prismaWrite.event.findMany({
+        where: { id: { in: legacyEventIds } },
+        select: { id: true, network: true },
+      })
+    : [];
+  const legacyEventNetworks = new Map(
+    existingLegacyEvents.map((event) => [event.id, event.network]),
+  );
 
   // Contracts recur across every event in the range — index each address once
   // per processed range rather than once per event.
@@ -525,7 +544,9 @@ async function processLedgerRangeInternal(
     indexerPipelineStageProcessedTotal.inc({ stage: 'enrich', status: 'success' });
 
     const existingTx = await prisma.transaction.findUnique({
-      where: { hash: event.transactionHash },
+      where: {
+        network_hash: { network, hash: event.transactionHash },
+      },
     });
 
     if (!existingTx) {
@@ -634,6 +655,7 @@ async function processLedgerRangeInternal(
       stopEnrichTxTimer();
       indexerPipelineStageProcessedTotal.inc({ stage: 'enrich', status: 'success' });
     }
+    indexedTransactionHashes.add(event.transactionHash);
 
     // Decode & Persist Event
     const stopDecodeEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'decode' });
@@ -646,7 +668,11 @@ async function processLedgerRangeInternal(
     indexerPipelineStageProcessedTotal.inc({ stage: 'decode', status: 'success' });
 
     const positionKey = event.pagingToken || `${event.ledgerSequence}-${events.indexOf(event)}`;
-    const eventId = `${event.transactionHash}-${positionKey}`;
+    const legacyEventId = `${event.transactionHash}-${positionKey}`;
+    const eventId =
+      legacyEventNetworks.get(legacyEventId) === network
+        ? legacyEventId
+        : `${network}-${legacyEventId}`;
 
     const stopPersistEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
     const savedEvent = await withIndexerSpan(
@@ -696,6 +722,13 @@ async function processLedgerRangeInternal(
     stopEnrichEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'enrich', status: 'success' });
   }
+
+  return {
+    network,
+    ledgerSequences: indexedLedgerSequences,
+    transactionHashes: [...indexedTransactionHashes],
+    eventIds: [...indexedEventIds],
+  };
 }
 
 /**

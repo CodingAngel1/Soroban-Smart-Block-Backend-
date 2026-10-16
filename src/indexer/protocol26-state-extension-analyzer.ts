@@ -12,6 +12,7 @@
 
 import { xdr, scValToNative } from '@stellar/stellar-sdk';
 import { prismaRead as prisma } from '../db';
+import { config } from '../config';
 import { logger } from '../logger';
 
 export interface StateExtensionParams {
@@ -365,7 +366,12 @@ export async function storeStateExtensionAnalysis(analysis: StateExtensionAnalys
     // Create or update a record in a new table (to be added to schema)
     // For now, we'll store in the Transaction's functionArgs as enriched metadata
     await prisma.transaction.update({
-      where: { hash: analysis.transactionHash },
+      where: {
+        network_hash: {
+          network: config.stellarNetwork,
+          hash: analysis.transactionHash,
+        },
+      },
       data: {
         functionArgs: JSON.parse(
           JSON.stringify({
