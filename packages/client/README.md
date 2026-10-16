@@ -99,6 +99,10 @@ try {
 | `logger`          | none       | `{ debug, warn }`; the SDK is silent by default             |
 | `onRequest`       | none       | Per-attempt telemetry event (wire to OpenTelemetry etc.)    |
 
+See the [retry policy](../../docs/sdk/typescript/retry-behavior.md) for safe
+replay behavior, `429` assumptions, and guidance for ambiguous mutation
+timeouts.
+
 ## Realtime
 
 ```ts
