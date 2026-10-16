@@ -37,6 +37,7 @@ import yogaHandler from './graphql';
 import { createTryItRouter, tryItAttribution } from './api/tryit/router';
 import { featureFlags } from './feature-flags';
 import { errorHandler } from './middleware/errorHandler';
+import { publicErrorCodeMiddleware } from './middleware/publicErrorCodes';
 import { requestContext } from './middleware/requestContext';
 import { apiKeyAuth } from './middleware/apiKeyAuth';
 import { metricsAuth, metricsRateLimiter } from './middleware/metricsAuth';
@@ -204,6 +205,7 @@ export function createApp(options: AppOptions): express.Express {
   // Request size guard before body parsing (Issue #274)
   app.use(requestSizeGuard(1_048_576)); // 1 MB
 
+  app.use(publicErrorCodeMiddleware);
   app.use(express.json({ limit: '1mb' }));
   app.use(networkRouter);
 

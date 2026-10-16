@@ -96,13 +96,19 @@ const options: swaggerJsdoc.Options = {
             createdAt: { type: 'string', format: 'date-time' },
           },
         },
-        // Shared error envelope returned by route handlers, e.g. { error: "..." }.
+        // Every HTTP error response includes a stable top-level machine code.
         Error: {
           type: 'object',
+          required: ['code'],
           properties: {
-            error: {
+            code: {
               type: 'string',
-              description: 'Human-readable error message',
+              description:
+                'Stable machine-readable error code; clients should branch on this value.',
+              example: 'VALIDATION_ERROR',
+            },
+            error: {
+              description: 'Endpoint-specific error details or human-readable message.',
               // Neutral fallback; each error response overrides this with a
               // response-level example reflecting that endpoint's real message.
               example: 'Bad request',
