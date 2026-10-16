@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { transactionService } from '../services/transaction.service';
+import { conditionalCache } from '../middleware/conditionalCache';
 
 /**
  * @swagger
@@ -240,6 +241,7 @@ transactionRouter.get(
 // GET /transactions/:hash
 transactionRouter.get(
   '/:hash',
+  conditionalCache,
   asyncHandler(async (req: Request, res: Response) => {
     const tx = await transactionService.getTransactionByHash(req.params.hash);
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });

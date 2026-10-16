@@ -252,6 +252,21 @@ export function createApp(options: AppOptions): express.Express {
     }),
   );
 
+  app.use(requestTimeout());
+  app.use('/api/v1/batch', responseSizeBudget(BATCH_RESPONSE_MAX_BYTES));
+  app.use(
+    [
+      '/api/v1/analytics',
+      '/api/v1/dex-analytics',
+      '/api/v1/portfolio',
+      '/api/v1/simulate',
+      '/api/v1/verify',
+      '/api/v1/compiler',
+      '/api/v1/query',
+    ],
+    responseSizeBudget(EXPENSIVE_RESPONSE_MAX_BYTES),
+  );
+
   app.use('/api/graphql', yogaHandler as unknown as express.RequestHandler);
 
   app.use('/api/v1', versioningMiddleware, router);

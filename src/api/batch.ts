@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { prismaRead as prisma } from '../db';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
+import { logger } from '../logger';
 
 /**
  * @swagger
@@ -16,16 +17,38 @@ export const batchRouter = Router();
  * Batch request schemas
  */
 const batchEventsSchema = z.object({
-  ids: z.array(z.string()).min(1).max(100),
+  ids: z.array(z.unknown()).min(1).max(100),
 });
 
 const batchTransactionsSchema = z.object({
-  hashes: z.array(z.string()).min(1).max(100),
+  hashes: z.array(z.unknown()).min(1).max(100),
 });
 
 const batchAccountsSchema = z.object({
-  addresses: z.array(z.string()).min(1).max(100),
+  addresses: z.array(z.unknown()).min(1).max(100),
 });
+
+interface BatchItemError {
+  index: number;
+  code: 'INVALID_ITEM' | 'LOOKUP_FAILED';
+  message: string;
+}
+
+function invalidItemErrors(items: unknown[]): BatchItemError[] {
+  return items.flatMap((item, index) =>
+    typeof item === 'string'
+      ? []
+      : [{ index, code: 'INVALID_ITEM' as const, message: 'Item must be a string' }],
+  );
+}
+
+function lookupFailedErrors(indexes: number[]): BatchItemError[] {
+  return indexes.map((index) => ({
+    index,
+    code: 'LOOKUP_FAILED',
+    message: 'Unable to look up item',
+  }));
+}
 
 /**
  * @swagger
@@ -81,6 +104,15 @@ const batchAccountsSchema = z.object({
  *                   description: IDs that were not found
  *                   items:
  *                     type: string
+ *                 errors:
+ *                   type: array
+ *                   description: Invalid or failed input items, identified by their zero-based input index
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       index: { type: integer }
+ *                       code: { type: string, enum: [INVALID_ITEM, LOOKUP_FAILED] }
+ *                       message: { type: string }
  *               example:
  *                 data:
  *                   - id: '3389e9f0-...-AAAADwAAAAh0cmFuc2Zlcg=='
@@ -108,31 +140,49 @@ batchRouter.post(
   '/events',
   asyncHandler(async (req: Request, res: Response) => {
     const { ids } = batchEventsSchema.parse(req.body);
+    const validItems = ids.flatMap((id, index) => (typeof id === 'string' ? [{ id, index }] : []));
+    const errors = invalidItemErrors(ids);
 
-    const events = await prisma.event.findMany({
-      where: { id: { in: ids } },
-      select: {
-        id: true,
-        transactionHash: true,
-        contractAddress: true,
-        eventType: true,
-        topicSymbol: true,
-        decoded: true,
-        ledgerSequence: true,
-        ledgerCloseTime: true,
-      },
-    });
+    let events: Array<{ id: string }> = [];
+    try {
+      events =
+        validItems.length === 0
+          ? []
+          : await prisma.event.findMany({
+              where: { id: { in: validItems.map(({ id }) => id) } },
+              select: {
+                id: true,
+                transactionHash: true,
+                contractAddress: true,
+                eventType: true,
+                topicSymbol: true,
+                decoded: true,
+                ledgerSequence: true,
+                ledgerCloseTime: true,
+              },
+            });
+    } catch (err) {
+      logger.error('[batch] Event lookup failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return res.status(503).json({
+        data: ids.map((_id): null => null),
+        missing: [],
+        errors: [...errors, ...lookupFailedErrors(validItems.map(({ index }) => index))],
+      });
+    }
 
     // Create a map for quick lookup
     const eventMap = new Map(events.map((e) => [e.id, e]));
 
     // Maintain order from input and return null for missing
-    const data = ids.map((id) => eventMap.get(id) || null);
-    const missing = ids.filter((id) => !eventMap.has(id));
+    const data = ids.map((id) => (typeof id === 'string' ? eventMap.get(id) || null : null));
+    const missing = ids.filter((id) => typeof id === 'string' && !eventMap.has(id));
 
     res.json({
       data,
       missing,
+      errors,
     });
   }),
 );
@@ -199,6 +249,15 @@ batchRouter.post(
  *                   description: Hashes that were not found
  *                   items:
  *                     type: string
+ *                 errors:
+ *                   type: array
+ *                   description: Invalid or failed input items, identified by their zero-based input index
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       index: { type: integer }
+ *                       code: { type: string, enum: [INVALID_ITEM, LOOKUP_FAILED] }
+ *                       message: { type: string }
  *               example:
  *                 data:
  *                   - hash: '3389e9f0f1a4e32477b1c0d9e8a6f5b4c3d2e1f0a9b8c7d6e5f40312233445566'
@@ -232,43 +291,63 @@ batchRouter.post(
   '/transactions',
   asyncHandler(async (req: Request, res: Response) => {
     const { hashes } = batchTransactionsSchema.parse(req.body);
+    const validItems = hashes.flatMap((hash, index) =>
+      typeof hash === 'string' ? [{ hash, index }] : [],
+    );
+    const errors = invalidItemErrors(hashes);
 
-    const transactions = await prisma.transaction.findMany({
-      where: { hash: { in: hashes } },
-      select: {
-        hash: true,
-        ledgerSequence: true,
-        ledgerCloseTime: true,
-        sourceAccount: true,
-        contractAddress: true,
-        functionName: true,
-        functionArgs: true,
-        status: true,
-        humanReadable: true,
-        feeCharged: true,
-        sorobanResources: true,
-        failureReason: true,
-        events: {
-          select: {
-            id: true,
-            eventType: true,
-            topicSymbol: true,
-            decoded: true,
-          },
-        },
-      },
-    });
+    let transactions: Array<{ hash: string }> = [];
+    try {
+      transactions =
+        validItems.length === 0
+          ? []
+          : await prisma.transaction.findMany({
+              where: { hash: { in: validItems.map(({ hash }) => hash) } },
+              select: {
+                hash: true,
+                ledgerSequence: true,
+                ledgerCloseTime: true,
+                sourceAccount: true,
+                contractAddress: true,
+                functionName: true,
+                functionArgs: true,
+                status: true,
+                humanReadable: true,
+                feeCharged: true,
+                sorobanResources: true,
+                failureReason: true,
+                events: {
+                  select: {
+                    id: true,
+                    eventType: true,
+                    topicSymbol: true,
+                    decoded: true,
+                  },
+                },
+              },
+            });
+    } catch (err) {
+      logger.error('[batch] Transaction lookup failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return res.status(503).json({
+        data: hashes.map((_hash): null => null),
+        missing: [],
+        errors: [...errors, ...lookupFailedErrors(validItems.map(({ index }) => index))],
+      });
+    }
 
     // Create a map for quick lookup
     const txMap = new Map(transactions.map((tx) => [tx.hash, tx]));
 
     // Maintain order from input and return null for missing
-    const data = hashes.map((hash) => txMap.get(hash) || null);
-    const missing = hashes.filter((hash) => !txMap.has(hash));
+    const data = hashes.map((hash) => (typeof hash === 'string' ? txMap.get(hash) || null : null));
+    const missing = hashes.filter((hash) => typeof hash === 'string' && !txMap.has(hash));
 
     res.json({
       data,
       missing,
+      errors,
     });
   }),
 );
@@ -326,6 +405,15 @@ batchRouter.post(
  *                   description: Addresses with no recorded Soroban activity
  *                   items:
  *                     type: string
+ *                 errors:
+ *                   type: array
+ *                   description: Invalid or failed input items, identified by their zero-based input index
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       index: { type: integer }
+ *                       code: { type: string, enum: [INVALID_ITEM, LOOKUP_FAILED] }
+ *                       message: { type: string }
  *               example:
  *                 data:
  *                   - address: 'GBZXN7PIRZGNMHGA7MUUUF4GWPY5AYPV6LY4UV2GL6VJGIQRXFDNMADI'
@@ -352,23 +440,39 @@ batchRouter.post(
   '/accounts',
   asyncHandler(async (req: Request, res: Response) => {
     const { addresses } = batchAccountsSchema.parse(req.body);
+    const validItems = addresses.flatMap((address, index) =>
+      typeof address === 'string' ? [{ address, index }] : [],
+    );
+    const errors = invalidItemErrors(addresses);
 
     // Fetch transaction stats for each address
-    const txStats = await prisma.transaction.groupBy({
-      by: ['sourceAccount'],
-      where: { sourceAccount: { in: addresses } },
-      _count: {
-        hash: true,
-      },
-      _min: {
-        ledgerSequence: true,
-        ledgerCloseTime: true,
-      },
-      _max: {
-        ledgerSequence: true,
-        ledgerCloseTime: true,
-      },
-    });
+    let txStats: Array<{
+      sourceAccount: string;
+      _count: { hash: number };
+      _min: { ledgerSequence: number | null; ledgerCloseTime: Date | null };
+      _max: { ledgerSequence: number | null; ledgerCloseTime: Date | null };
+    }> = [];
+    try {
+      txStats =
+        validItems.length === 0
+          ? []
+          : await prisma.transaction.groupBy({
+              by: ['sourceAccount'],
+              where: { sourceAccount: { in: validItems.map(({ address }) => address) } },
+              _count: { hash: true },
+              _min: { ledgerSequence: true, ledgerCloseTime: true },
+              _max: { ledgerSequence: true, ledgerCloseTime: true },
+            });
+    } catch (err) {
+      logger.error('[batch] Account transaction lookup failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return res.status(503).json({
+        data: addresses.map((_address): null => null),
+        inactive: [],
+        errors: [...errors, ...lookupFailedErrors(validItems.map(({ index }) => index))],
+      });
+    }
 
     // Fetch event stats (events can reference addresses in decoded payload)
     // This is more complex, so we'll use a simpler approach: count events where the address appears in the event
@@ -403,51 +507,49 @@ batchRouter.post(
 
     // For addresses with transaction activity, try to count related events
     const addressesWithActivity = Object.keys(accountStats);
-    if (addressesWithActivity.length > 0) {
-      // This is approximate: count events from transactions involving these addresses
-      const eventCounts = await prisma.event.groupBy({
-        by: ['transactionHash'],
-        where: {
-          transaction: {
-            sourceAccount: { in: addressesWithActivity },
-          },
-        },
-        _count: true,
-      });
-
-      for (const count of eventCounts) {
-        // Aggregate all events from transactions of tracked addresses
-        // (This is an approximation; a full implementation might decode payloads)
-      }
-
-      // Simple approximation: count all events from transactions by these addresses
-      const totalEventCounts = await Promise.all(
-        addressesWithActivity.map(async (addr) => {
-          const eventCount = await prisma.event.count({
-            where: {
-              transaction: {
-                sourceAccount: addr,
-              },
-            },
-          });
-          return { address: addr, eventCount };
+    const eventCountResults = await Promise.allSettled(
+      addressesWithActivity.map(async (address) => ({
+        address,
+        eventCount: await prisma.event.count({
+          where: { transaction: { sourceAccount: address } },
         }),
-      );
+      })),
+    );
+    const failedAddresses = new Set<string>();
+    eventCountResults.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        accountStats[result.value.address].eventCount = result.value.eventCount;
+      } else {
+        failedAddresses.add(addressesWithActivity[index]);
+        logger.error('[batch] Account event lookup failed', {
+          address: addressesWithActivity[index],
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+      }
+    });
 
-      for (const { address, eventCount } of totalEventCounts) {
-        if (accountStats[address]) {
-          accountStats[address].eventCount = eventCount;
-        }
+    for (const { address, index } of validItems) {
+      if (failedAddresses.has(address)) {
+        errors.push({
+          index,
+          code: 'LOOKUP_FAILED',
+          message: 'Unable to look up item',
+        });
       }
     }
 
     // Maintain order from input and return null for inactive addresses
-    const data = addresses.map((addr) => accountStats[addr] || null);
-    const inactive = addresses.filter((addr) => !accountStats[addr]);
+    const data = addresses.map((addr) =>
+      typeof addr === 'string' && !failedAddresses.has(addr) ? accountStats[addr] || null : null,
+    );
+    const inactive = addresses.filter(
+      (addr) => typeof addr === 'string' && !accountStats[addr] && !failedAddresses.has(addr),
+    );
 
     res.json({
       data,
       inactive,
+      errors,
     });
   }),
 );

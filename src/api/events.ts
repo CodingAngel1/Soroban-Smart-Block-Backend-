@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
+import { conditionalCache } from '../middleware/conditionalCache';
 import { validateQuery, validateParams } from '../middleware/validation';
 import { paginationSchema, stellarAddress, safeLabel } from '../schemas/common';
 import { eventService } from '../services/event.service';
@@ -196,6 +197,7 @@ eventRouter.get(
 eventRouter.get(
   '/:id',
   validateParams(z.object({ id: z.string() })),
+  conditionalCache,
   asyncHandler(async (req: Request, res: Response) => {
     const params = (req as any).validatedParams as { id: string };
     const event = await eventService.getEventById(params.id);

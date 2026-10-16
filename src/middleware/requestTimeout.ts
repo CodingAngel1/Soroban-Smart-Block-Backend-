@@ -84,6 +84,11 @@ const TIMEOUT_ROUTES: TimeoutConfig[] = [
     label: 'graphql',
   },
   {
+    pattern: /^\/api\/v1\/(simulate|verify|compiler|query|aa)(?:\/|$)/,
+    timeout: TIMEOUT_LONG,
+    label: 'expensive-computation',
+  },
+  {
     pattern: /^\/api\/billing/,
     timeout: TIMEOUT_NORMAL,
     label: 'billing-api',

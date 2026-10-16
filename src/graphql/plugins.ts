@@ -30,9 +30,8 @@ export const complexityPlugin: Plugin = {
 export const depthLimitPlugin: Plugin = {
   onExecute({ args }) {
     const limit = maxDepth();
-    const rule = depthLimit(limit) as any;
-    const errors = rule(null, args.document);
-    if (errors && errors.length > 0) {
+    const errors = validate(args.schema, args.document, [depthLimit(limit)]);
+    if (errors.length > 0) {
       throw new GraphQLError(`Query exceeds maximum depth of ${limit}`);
     }
   },
