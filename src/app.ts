@@ -48,6 +48,12 @@ import { getP2pStatusSnapshot, resolveLedgerLocation } from './p2p';
 import { getIndexerStatus } from './indexer-state';
 import { statusRouter } from './api/status';
 import { logger } from './logger';
+import { requestTimeout } from './middleware/requestTimeout';
+import {
+  BATCH_RESPONSE_MAX_BYTES,
+  EXPENSIVE_RESPONSE_MAX_BYTES,
+  responseSizeBudget,
+} from './middleware/responseSizeBudget';
 
 export interface AppOptions {
   /** Returns true once graceful shutdown has begun (probes respond 503). */
@@ -242,6 +248,21 @@ export function createApp(options: AppOptions): express.Express {
       getSpec: () => swaggerSpec,
       isEnabled: (developerId) => featureFlags.isEnabledSync('tryItConsole', { developerId }),
     }),
+  );
+
+  app.use(requestTimeout());
+  app.use('/api/v1/batch', responseSizeBudget(BATCH_RESPONSE_MAX_BYTES));
+  app.use(
+    [
+      '/api/v1/analytics',
+      '/api/v1/dex-analytics',
+      '/api/v1/portfolio',
+      '/api/v1/simulate',
+      '/api/v1/verify',
+      '/api/v1/compiler',
+      '/api/v1/query',
+    ],
+    responseSizeBudget(EXPENSIVE_RESPONSE_MAX_BYTES),
   );
 
   app.use('/api/graphql', yogaHandler as unknown as express.RequestHandler);
