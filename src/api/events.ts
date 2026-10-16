@@ -3,7 +3,12 @@ import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { conditionalCache } from '../middleware/conditionalCache';
 import { validateQuery, validateParams } from '../middleware/validation';
+import { sendValidatedResponse } from '../middleware/responseValidation';
 import { paginationSchema, stellarAddress, safeLabel } from '../schemas/common';
+import {
+  eventListResponseSchema,
+  eventResponseSchema,
+} from '../schemas/transaction-event-responses';
 import { eventService } from '../services/event.service';
 import { createCursorScope, decodeOpaqueCursor, encodeOpaqueCursor } from '../utils/opaque-cursor';
 
@@ -221,6 +226,6 @@ eventRouter.get(
     const params = (req as any).validatedParams as { id: string };
     const event = await eventService.getEventById(params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
-    res.json(event);
+    sendValidatedResponse(res, eventResponseSchema, event, 'GET /events/:id');
   }),
 );

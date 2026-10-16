@@ -275,6 +275,6 @@ transactionRouter.get(
     const tx = await transactionService.getTransactionByHash(req.params.hash);
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });
 
-    res.json(tx);
+    sendValidatedResponse(res, transactionDetailResponseSchema, tx, 'GET /transactions/:hash');
   }),
 );

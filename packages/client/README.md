@@ -73,15 +73,27 @@ for await (const tx of client.paginate(
 
 ## Errors
 
+The generated `SorobanClient` uses transport-specific error classes so the
+existing 1.0 reputation-client error exports remain compatible:
+
 ```ts
-import { NotFoundError, RateLimitError, SorobanApiError } from '@soroban-explorer/client';
+import {
+  SorobanClient,
+  TransportApiError,
+  TransportNotFoundError,
+  TransportRateLimitError,
+} from '@soroban-explorer/client';
+
+const client = new SorobanClient();
+const hash = 'transaction-hash';
 
 try {
   await client.transactions.get(hash);
 } catch (err) {
-  if (err instanceof NotFoundError) …;
-  else if (err instanceof RateLimitError) console.log(err.retryAfterMs, err.rateLimit);
-  else if (err instanceof SorobanApiError) console.log(err.status, err.code, err.requestId);
+  if (err instanceof TransportNotFoundError) {
+    /* unknown transaction */
+  } else if (err instanceof TransportRateLimitError) console.log(err.retryAfterMs, err.rateLimit);
+  else if (err instanceof TransportApiError) console.log(err.status, err.code, err.requestId);
 }
 ```
 
@@ -104,6 +116,10 @@ try {
 | `fetch`           | global     | Custom fetch implementation                                 |
 | `logger`          | none       | `{ debug, warn }`; the SDK is silent by default             |
 | `onRequest`       | none       | Per-attempt telemetry event (wire to OpenTelemetry etc.)    |
+
+See the [retry policy](../../docs/sdk/typescript/retry-behavior.md) for safe
+replay behavior, `429` assumptions, and guidance for ambiguous mutation
+timeouts.
 
 ## Realtime
 
@@ -139,6 +155,8 @@ const client = new ReputationClient({ baseUrl: 'http://localhost:3000' });
 try {
   const score = await retryOnRateLimit(() => client.score('G...'), { maxRetries: 3 });
 } catch (err) {
-  if (err instanceof NotFoundError) { /* unknown address */ }
+  if (err instanceof NotFoundError) {
+    /* unknown address */
+  }
 }
 ```
