@@ -101,13 +101,16 @@ INDEXER_BATCH_SIZE=-50        # Negative
 - **Type**: Integer
 - **Range**: 1 - 32
 - **Default**: 4
-- **Validation**: Must be between 1 and 32 to prevent resource exhaustion
+- **Validation**: Must be between 1 and 32 to prevent resource exhaustion. Catch-up workers are bounded per indexer process and therefore per selected `STELLAR_NETWORK`.
+
+Optional `INDEXER_CATCHUP_WORKERS_TESTNET`, `INDEXER_CATCHUP_WORKERS_MAINNET`, and `INDEXER_CATCHUP_WORKERS_DEVNET` values override the default for the matching network. Each override has the same 1-32 validation. Use a lower mainnet cap, for example, to keep a busy production indexer from competing with a testnet or devnet process. These settings do not impose a shared machine-wide cap; deploy and size each network process independently.
 
 **Examples**:
 ```bash
 # Valid
 INDEXER_CATCHUP_WORKERS=4
 INDEXER_CATCHUP_WORKERS=16
+INDEXER_CATCHUP_WORKERS_MAINNET=2
 
 # Invalid
 INDEXER_CATCHUP_WORKERS=0     # Not positive
