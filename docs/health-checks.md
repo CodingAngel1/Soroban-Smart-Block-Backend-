@@ -6,20 +6,23 @@ This document describes the health check endpoints available in the Soroban Smar
 
 The backend provides three types of health check endpoints, each serving different purposes for monitoring and orchestration:
 
-1. **`/health`** - Comprehensive dependency health check
-2. **`/livez`** - Liveness probe (should the service be restarted?)
-3. **`/readyz`** - Readiness probe (can the service handle traffic?)
-4. **`/ready`** - Legacy readiness probe (backwards compatibility)
+1. **`/healthz`** and **`/livez`** - Liveness probes (is the process alive?)
+2. **`/readyz`** - Readiness probe (can the service handle traffic?)
+3. **`/health/dependencies`** - Live dependency health checks for operators
+4. **`/health`** - Cached operational summary; **`/health/detailed`** remains a
+   compatibility alias for the live dependency check
+5. **`/ready`** - Legacy indexer-only readiness probe (backwards compatibility)
 
 ## Endpoint Details
 
-### `/health` - Comprehensive Health Check
+### `/health/dependencies` - Live Dependency Health
 
 Returns detailed health status of all system dependencies.
 
-**Purpose**: Complete visibility into the health of all backend components. Useful for dashboards, alerting, and diagnostics.
+**Purpose**: Runs live database, cache, RPC, indexer, worker, P2P, and cold-storage checks for operator diagnostics. This endpoint is distinct from both liveness and readiness and may perform network and database I/O.
 
 **HTTP Status Codes**:
+
 - `200 OK` - Service is healthy or degraded (non-critical issues)
 - `503 Service Unavailable` - Service is unhealthy or shutting down
 
@@ -78,14 +81,26 @@ Returns detailed health status of all system dependencies.
 ```
 
 **Dependency Status Meanings**:
+
 - **`healthy`** - Component is fully operational
 - **`degraded`** - Component has non-critical issues (e.g., high latency, fallback mode)
 - **`unhealthy`** - Component is not operational
 
 **Usage**:
+
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8080/health/dependencies
 ```
+
+---
+
+### `/health` and `/health/detailed` compatibility
+
+`/health` returns a low-cost summary based on the latest readiness state;
+`/health/detailed` retains the previous live dependency check behavior. New
+integrations should use `/health/dependencies` when they need dependency
+diagnostics and `/readyz` when they need a traffic-routing decision. None of
+these dependency checks should be configured as a container liveness probe.
 
 ---
 
@@ -96,6 +111,7 @@ Simple check to determine if the service is alive and should not be restarted.
 **Purpose**: Used by container orchestrators (Kubernetes, Docker Swarm) to determine if the service needs to be restarted. A failing liveness check typically triggers a container restart.
 
 **HTTP Status Codes**:
+
 - `200 OK` - Service is alive
 - `503 Service Unavailable` - Service is dead or shutting down
 
@@ -110,16 +126,19 @@ Simple check to determine if the service is alive and should not be restarted.
 ```
 
 **Fields**:
+
 - `status` - Current liveness state
 - `timestamp` - Current server time
 - `uptime` - Service uptime in seconds
 
 **Usage**:
+
 ```bash
 curl http://localhost:8080/livez
 ```
 
 **Kubernetes Example**:
+
 ```yaml
 livenessProbe:
   httpGet:
@@ -140,6 +159,7 @@ Detailed check to determine if the service is ready to handle traffic.
 **Purpose**: Used by load balancers and orchestrators to determine if the service should receive traffic. A failing readiness check removes the service from the load balancer pool without restarting it.
 
 **HTTP Status Codes**:
+
 - `200 OK` - Service is ready to handle traffic
 - `503 Service Unavailable` - Service is not ready (still initializing or dependencies unavailable)
 
@@ -160,17 +180,20 @@ Detailed check to determine if the service is ready to handle traffic.
 ```
 
 **Fields**:
+
 - `status` - Current readiness state
 - `timestamp` - Current server time
 - `dependencies` - Boolean status of each required dependency
 - `blockers` - (Optional) List of dependencies that are preventing readiness
 
 **Usage**:
+
 ```bash
 curl http://localhost:8080/readyz
 ```
 
 **Kubernetes Example**:
+
 ```yaml
 readinessProbe:
   httpGet:
@@ -192,6 +215,7 @@ Legacy endpoint for backwards compatibility. Focuses primarily on indexer status
 **Purpose**: Maintained for backwards compatibility with existing monitoring systems.
 
 **HTTP Status Codes**:
+
 - `200 OK` - Indexer is healthy
 - `503 Service Unavailable` - Indexer has failed
 
@@ -206,6 +230,7 @@ Legacy endpoint for backwards compatibility. Focuses primarily on indexer status
 ```
 
 **Usage**:
+
 ```bash
 curl http://localhost:8080/ready
 ```
@@ -218,13 +243,13 @@ curl http://localhost:8080/ready
 
 Understanding the distinction between liveness and readiness is crucial for proper orchestration:
 
-| Aspect | Liveness (`/livez`) | Readiness (`/readyz`) |
-|--------|---------------------|----------------------|
-| **Question** | Is the process alive? | Can it handle traffic? |
-| **Action on Failure** | Restart the container | Remove from load balancer |
-| **Use Case** | Detect deadlocks, infinite loops | Detect initialization delays, dependency outages |
-| **Recovery** | Process restart | Wait for dependencies |
-| **Example Failure** | Out of memory, deadlock | Database connection lost, still starting up |
+| Aspect                | Liveness (`/livez`)              | Readiness (`/readyz`)                            |
+| --------------------- | -------------------------------- | ------------------------------------------------ |
+| **Question**          | Is the process alive?            | Can it handle traffic?                           |
+| **Action on Failure** | Restart the container            | Remove from load balancer                        |
+| **Use Case**          | Detect deadlocks, infinite loops | Detect initialization delays, dependency outages |
+| **Recovery**          | Process restart                  | Wait for dependencies                            |
+| **Example Failure**   | Out of memory, deadlock          | Database connection lost, still starting up      |
 
 **Key Principle**: A service can be alive but not ready. Never restart a service just because it's not ready.
 
@@ -238,6 +263,7 @@ Understanding the distinction between liveness and readiness is crucial for prop
 ### Example Health Scenarios
 
 #### Scenario 1: Database Connection Lost
+
 - `/health` → 503 (unhealthy - database dependency failed)
 - `/livez` → 200 (alive - service is running)
 - `/readyz` → 503 (not ready - missing required dependency)
@@ -245,6 +271,7 @@ Understanding the distinction between liveness and readiness is crucial for prop
 **Action**: Service stays running, removed from load balancer until database reconnects.
 
 #### Scenario 2: High Database Latency
+
 - `/health` → 200 (degraded - database slow but functional)
 - `/livez` → 200 (alive)
 - `/readyz` → 200 (ready - can still serve traffic)
@@ -252,6 +279,7 @@ Understanding the distinction between liveness and readiness is crucial for prop
 **Action**: Service continues operating, alerts may be triggered for investigation.
 
 #### Scenario 3: Graceful Shutdown
+
 - `/health` → 503 (status: shutting_down)
 - `/livez` → 503 (dead)
 - `/readyz` → 503 (not_ready)
@@ -259,6 +287,7 @@ Understanding the distinction between liveness and readiness is crucial for prop
 **Action**: Service is terminating, no new traffic, no restart.
 
 #### Scenario 4: Redis Cache Unavailable (with in-memory fallback)
+
 - `/health` → 200 (degraded - cache using fallback)
 - `/livez` → 200 (alive)
 - `/readyz` → 200 (ready - can serve traffic with degraded performance)
@@ -276,7 +305,7 @@ services:
   backend:
     image: soroban-backend:latest
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ['CMD', 'curl', '-f', 'http://localhost:8080/health']
       interval: 30s
       timeout: 10s
       retries: 3
@@ -295,27 +324,27 @@ spec:
   template:
     spec:
       containers:
-      - name: backend
-        image: soroban-backend:latest
-        ports:
-        - containerPort: 8080
-        livenessProbe:
-          httpGet:
-            path: /livez
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 8080
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 3
-          successThreshold: 1
+        - name: backend
+          image: soroban-backend:latest
+          ports:
+            - containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
 ```
 
 ### Prometheus Monitoring
@@ -401,6 +430,7 @@ To add a new dependency check:
 4. Update this documentation
 
 Example:
+
 ```typescript
 // In src/health.ts
 function checkNewDependencyHealth(): DependencyHealth {

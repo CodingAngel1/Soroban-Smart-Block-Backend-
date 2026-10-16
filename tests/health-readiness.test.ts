@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { getReadinessState } from '../src/readiness';
 import { getHealthStatus } from '../src/health';
+import { prismaRead, prismaWrite } from '../src/db';
+import { dbConnectionStatus } from '../src/metrics';
 
 vi.mock('../src/db', () => ({
   prismaRead: {
@@ -30,6 +32,11 @@ vi.mock('../src/db/replicaGateway', () => ({
 }));
 
 describe('Health and Readiness dependency set alignment', () => {
+  beforeEach(() => {
+    vi.mocked(prismaRead.$queryRaw).mockResolvedValue([{}]);
+    vi.mocked(prismaWrite.$queryRaw).mockResolvedValue([{}]);
+  });
+
   it('asserts that /readyz and /health never disagree on the dependency set', async () => {
     const readinessState = getReadinessState();
     const healthStatus = await getHealthStatus(false);
@@ -51,5 +58,31 @@ describe('Health and Readiness dependency set alignment', () => {
     const mappedReadinessKeys = readinessKeys.map((k) => readinessToHealthMap[k] || k).sort();
 
     expect(mappedReadinessKeys).toEqual(healthKeys);
+  });
+
+  it('reports a read-replica outage as degraded without hiding the healthy write primary', async () => {
+    vi.mocked(prismaRead.$queryRaw).mockRejectedValue(new Error('read replica unavailable'));
+
+    const health = await getHealthStatus(true);
+
+    expect(health.dependencies.database.status).toBe('degraded');
+    expect(health.dependencies.database.details).toMatchObject({
+      readReplica: 'disconnected',
+      writePrimary: 'connected',
+    });
+    expect((await dbConnectionStatus.get()).values[0]?.value).toBe(1);
+  });
+
+  it('reports a write-primary outage as unhealthy even when reads remain available', async () => {
+    vi.mocked(prismaWrite.$queryRaw).mockRejectedValue(new Error('write primary unavailable'));
+
+    const health = await getHealthStatus(true);
+
+    expect(health.dependencies.database.status).toBe('unhealthy');
+    expect(health.dependencies.database.details).toMatchObject({
+      readReplica: 'connected',
+      writePrimary: 'disconnected',
+    });
+    expect((await dbConnectionStatus.get()).values[0]?.value).toBe(0);
   });
 });

@@ -151,11 +151,24 @@ const envSchema = z.object({
   TRUST_PROXY: z.string().optional(),
 
   STELLAR_NETWORK: z.string().default('testnet'),
+  API_MAINTENANCE_MODE: z.enum(['off', 'reads', 'writes', 'all']).default('off'),
 
   INDEXER_START_LEDGER: z.coerce.number().int().min(0).default(0),
   INDEXER_POLL_INTERVAL_MS: z.coerce.number().int().positive().min(100).default(5000),
   INDEXER_BATCH_SIZE: z.coerce.number().int().positive().max(1000).default(100),
   INDEXER_CATCHUP_WORKERS: z.coerce.number().int().min(1).max(32).default(4),
+  INDEXER_CATCHUP_WORKERS_TESTNET: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(1).max(32).optional(),
+  ),
+  INDEXER_CATCHUP_WORKERS_MAINNET: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(1).max(32).optional(),
+  ),
+  INDEXER_CATCHUP_WORKERS_DEVNET: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce.number().int().min(1).max(32).optional(),
+  ),
   INDEXER_REORG_PROTECTION_DEPTH: z.coerce.number().int().positive().default(100),
 
   MICRO_BLOCK_SYNC_ENABLED: z
@@ -297,6 +310,11 @@ export function assertConfig() {
 }
 
 const profile = getProfile(parsedEnv.STELLAR_NETWORK);
+const indexerCatchupWorkersByNetwork = {
+  testnet: parsedEnv.INDEXER_CATCHUP_WORKERS_TESTNET,
+  mainnet: parsedEnv.INDEXER_CATCHUP_WORKERS_MAINNET,
+  devnet: parsedEnv.INDEXER_CATCHUP_WORKERS_DEVNET,
+} as const;
 
 export const config = {
   // ── Server ───────────────────────────────────────────────────────────────
@@ -312,6 +330,7 @@ export const config = {
 
   profile,
   stellarNetwork: profile.name,
+  apiMaintenanceMode: parsedEnv.API_MAINTENANCE_MODE,
   stellarRpcUrl: profile.rpcUrl,
   stellarRpcWsUrl: profile.rpcWsUrl,
   horizonUrl: profile.horizonUrl,
@@ -328,7 +347,8 @@ export const config = {
   indexerStartLedger: parsedEnv.INDEXER_START_LEDGER,
   indexerPollIntervalMs: parsedEnv.INDEXER_POLL_INTERVAL_MS,
   indexerBatchSize: parsedEnv.INDEXER_BATCH_SIZE,
-  indexerCatchupWorkers: parsedEnv.INDEXER_CATCHUP_WORKERS,
+  indexerCatchupWorkers:
+    indexerCatchupWorkersByNetwork[profile.name] ?? parsedEnv.INDEXER_CATCHUP_WORKERS,
   indexerReorgProtectionDepth: parsedEnv.INDEXER_REORG_PROTECTION_DEPTH,
 
   microBlockSyncEnabled: parsedEnv.MICRO_BLOCK_SYNC_ENABLED,

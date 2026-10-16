@@ -17,7 +17,6 @@ import { logger } from '../logger';
 const PROTOCOL_FEATURES: Record<number, string[]> = {
   20: ['soroban_v1', 'invoke_host_function'],
   21: ['soroban_v2', 'transaction_meta_v3', 'diagnostic_events'],
-  22: ['soroban_v3', 'parallel_soroban'], // anticipated
 };
 
 /** Minimum supported protocol version for Soroban features */
@@ -108,6 +107,7 @@ export function safeXdrParse<T>(fn: () => T, fallback: T, context = 'XDR'): T {
 export interface ProtocolStatus {
   currentVersion: number;
   minSupported: number;
+  maxValidated: number;
   isSupported: boolean;
   knownFeatures: string[];
   warning: string | null;
@@ -118,7 +118,8 @@ export interface ProtocolStatus {
  */
 export async function getProtocolStatus(): Promise<ProtocolStatus> {
   const currentVersion = await getProtocolVersion();
-  const isSupported = currentVersion >= MIN_SOROBAN_PROTOCOL;
+  const maxValidated = Math.max(...Object.keys(PROTOCOL_FEATURES).map(Number));
+  const isSupported = currentVersion >= MIN_SOROBAN_PROTOCOL && currentVersion <= maxValidated;
 
   const knownFeatures: string[] = [];
   for (const [v, features] of Object.entries(PROTOCOL_FEATURES)) {
@@ -126,12 +127,11 @@ export async function getProtocolStatus(): Promise<ProtocolStatus> {
   }
 
   let warning: string | null = null;
-  const maxKnown = Math.max(...Object.keys(PROTOCOL_FEATURES).map(Number));
 
-  if (currentVersion > maxKnown) {
+  if (currentVersion > maxValidated) {
     warning =
-      `Protocol version ${currentVersion} is newer than the highest known version ` +
-      `(${maxKnown}). XDR structures may have changed — some parsing may fail gracefully.`;
+      `Protocol version ${currentVersion} is newer than the highest validated version ` +
+      `(${maxValidated}). XDR structures may have changed — some parsing may fail gracefully.`;
     logger.warn(`[protocol-guard] ⚠️  ${warning}`);
   } else if (!isSupported) {
     warning = `Protocol version ${currentVersion} is below minimum supported (${MIN_SOROBAN_PROTOCOL})`;
@@ -140,6 +140,7 @@ export async function getProtocolStatus(): Promise<ProtocolStatus> {
   return {
     currentVersion,
     minSupported: MIN_SOROBAN_PROTOCOL,
+    maxValidated,
     isSupported,
     knownFeatures,
     warning,

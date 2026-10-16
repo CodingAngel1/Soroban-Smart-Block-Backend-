@@ -32,6 +32,13 @@ vi.mock('../../src/webhooks/ssrf-guard', () => ({
   safeGet: vi.fn(),
 }));
 
+vi.mock('../../src/cache', () => ({
+  cacheGet: vi.fn().mockResolvedValue(null),
+  cacheSet: vi.fn().mockResolvedValue(undefined),
+  cacheDelete: vi.fn().mockResolvedValue(undefined),
+  cacheClear: vi.fn(),
+}));
+
 // ─── Mock config ──────────────────────────────────────────────────────────────
 
 vi.mock('../../src/config', () => ({
@@ -102,6 +109,8 @@ describe('getTokenMetadata — DB Contract', () => {
     expect(meta!.name).toBe('USD Coin');
     expect(meta!.decimals).toBe(6);
     expect(meta!.source).toBe('db');
+    expect(meta!.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(Number.isNaN(Date.parse(meta!.observedAt))).toBe(false);
   });
 
   it('defaults decimals to 7 when tokenDecimals is null', async () => {
@@ -114,6 +123,8 @@ describe('getTokenMetadata — DB Contract', () => {
 
     const meta = await getTokenMetadata(SOROBAN_ADDR);
     expect(meta!.decimals).toBe(7);
+    expect(meta!.source).toBe('db');
+    expect(meta!.observedAt).toBeTruthy();
   });
 
   it('caches the result — second call does not hit DB', async () => {
@@ -165,6 +176,7 @@ describe('getTokenMetadata — SacMapping (classic asset)', () => {
     expect(meta!.name).toBe('USD Coin');
     expect(meta!.decimals).toBe(7);
     expect(meta!.source).toBe('sac');
+    expect(meta!.observedAt).toBeTruthy();
   });
 
   it('falls back to assetCode as name when Horizon returns no record', async () => {
@@ -410,6 +422,7 @@ describe('getClassicAssetMetadata', () => {
     expect(meta.name).toBe('USD Coin');
     expect(meta.decimals).toBe(7);
     expect(meta.source).toBe('classic');
+    expect(meta.observedAt).toBeTruthy();
   });
 
   it('returns XLM metadata without Horizon call', async () => {

@@ -1,4 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../../src/db', () => ({
+  prismaRead: {
+    contract: { findUnique: vi.fn() },
+    contractNetwork: { findUnique: vi.fn() },
+  },
+}));
+
 import { decodeEvent } from '../../src/indexer/decoder';
 import { renderHuman, SEP41_ABI } from '../../src/indexer/registry';
 import { xdr, Address, Keypair, nativeToScVal } from '@stellar/stellar-sdk';
@@ -60,11 +68,15 @@ describe('decodeEvent', () => {
 
     expect(result.eventType).toBe('custom');
     expect(result.decoded).toHaveProperty('topics');
+    expect(result.decoded.raw).toEqual({ topics, data });
   });
 
   it('handles malformed XDR without throwing', () => {
-    const result = decodeEvent(['not-valid-base64!!!'], 'also-bad');
+    const topics = ['not-valid-base64!!!'];
+    const data = 'also-bad';
+    const result = decodeEvent(topics, data);
     expect(result.eventType).toBe('unknown');
+    expect(result.decoded.raw).toEqual({ topics, data });
   });
 });
 

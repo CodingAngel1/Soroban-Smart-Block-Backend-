@@ -1,4 +1,5 @@
 import { prismaRead as prisma } from '../db';
+import { config } from '../config';
 
 export interface ExecutionStep {
   stepNumber: number;
@@ -28,7 +29,7 @@ export async function analyzeUpgradeOrchestration(
   transactionHash: string,
 ): Promise<UpgradeOrchestration | null> {
   const transaction = await prisma.transaction.findUnique({
-    where: { hash: transactionHash },
+    where: { network_hash: { network: config.stellarNetwork, hash: transactionHash } },
     include: { events: true },
   });
 
@@ -147,7 +148,7 @@ export async function storeUpgradeOrchestration(
   orchestration: UpgradeOrchestration,
 ): Promise<void> {
   const existingTx = await prisma.transaction.findUnique({
-    where: { hash: transactionHash },
+    where: { network_hash: { network: config.stellarNetwork, hash: transactionHash } },
     select: { functionArgs: true },
   });
 
@@ -157,7 +158,7 @@ export async function storeUpgradeOrchestration(
       : {};
 
   await prisma.transaction.update({
-    where: { hash: transactionHash },
+    where: { network_hash: { network: config.stellarNetwork, hash: transactionHash } },
     data: {
       functionArgs: {
         ...updateArgs,

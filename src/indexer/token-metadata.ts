@@ -37,13 +37,15 @@ export interface TokenMetadata {
   decimals: number;
   /** Where the metadata was resolved from. */
   source: TokenSource;
+  /** Time at which these values were resolved by this backend. */
+  observedAt: string;
 }
 
 // ─── In-process LRU cache ─────────────────────────────────────────────────────
 
 const CACHE_MAX = 1024;
 const metaCache = new Map<string, TokenMetadata>();
-const TOKEN_METADATA_PREFIX = 'token-metadata:';
+const TOKEN_METADATA_PREFIX = 'token-metadata:v2:';
 const CLASSIC_ASSET_PREFIX = 'classic-asset:';
 
 function cacheEvictIfFull(): void {
@@ -284,6 +286,7 @@ export async function getTokenMetadata(address: string): Promise<TokenMetadata |
       name: contract.tokenName ?? null,
       decimals: contract.tokenDecimals ?? 7,
       source: 'db',
+      observedAt: new Date().toISOString(),
     };
     await writeCachedMetadata(address, cacheKey, meta);
     return meta;
@@ -302,6 +305,7 @@ export async function getTokenMetadata(address: string): Promise<TokenMetadata |
       name: horizonMeta?.name ?? sac.assetCode,
       decimals: 7,
       source: 'sac',
+      observedAt: new Date().toISOString(),
     };
     await writeCachedMetadata(address, cacheKey, meta);
     return meta;
@@ -321,6 +325,7 @@ export async function getTokenMetadata(address: string): Promise<TokenMetadata |
     name: rawName != null ? String(rawName) : null,
     decimals: rawDecimals,
     source: 'rpc',
+    observedAt: new Date().toISOString(),
   };
   await writeCachedMetadata(address, cacheKey, meta, 60 * 60);
   return meta;
@@ -347,6 +352,7 @@ export async function getClassicAssetMetadata(
     name: horizonMeta?.name ?? assetCode,
     decimals: 7,
     source: 'classic',
+    observedAt: new Date().toISOString(),
   };
   await writeCachedMetadata(cacheKey, remoteKey, meta);
   return meta;
@@ -432,6 +438,7 @@ export async function warmTokenMetadataCache(): Promise<void> {
       name: t.tokenName ?? null,
       decimals: t.tokenDecimals ?? 7,
       source: 'db',
+      observedAt: new Date().toISOString(),
     });
   }
 
@@ -445,6 +452,7 @@ export async function warmTokenMetadataCache(): Promise<void> {
         name: s.assetCode,
         decimals: 7,
         source: 'sac',
+        observedAt: new Date().toISOString(),
       });
     }
   }

@@ -7,8 +7,8 @@
 
 ## `GET /healthz`
 
-**Purpose**: Cheap Docker/Compose liveness probe. Answers: *should the container
-runtime restart this process?*
+**Purpose**: Cheap Docker/Compose liveness probe. Answers: _should the container
+runtime restart this process?_
 
 **I/O**: None. Process-only. Safe to call at any frequency.
 
@@ -22,11 +22,11 @@ runtime restart this process?*
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `status` | `"alive"` | Always `"alive"` when the process is running |
-| `timestamp` | ISO-8601 string | Current time in UTC |
-| `uptime` | integer (seconds) | Process uptime since start |
+| Field       | Type              | Description                                  |
+| ----------- | ----------------- | -------------------------------------------- |
+| `status`    | `"alive"`         | Always `"alive"` when the process is running |
+| `timestamp` | ISO-8601 string   | Current time in UTC                          |
+| `uptime`    | integer (seconds) | Process uptime since start                   |
 
 ### Response: 503 Service Unavailable (shutting down)
 
@@ -38,11 +38,11 @@ runtime restart this process?*
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `status` | `"dead"` | Process is draining, container may be replaced |
-| `reason` | `"shutting_down"` | Graceful shutdown in progress |
-| `timestamp` | ISO-8601 string | Current time in UTC |
+| Field       | Type              | Description                                    |
+| ----------- | ----------------- | ---------------------------------------------- |
+| `status`    | `"dead"`          | Process is draining, container may be replaced |
+| `reason`    | `"shutting_down"` | Graceful shutdown in progress                  |
+| `timestamp` | ISO-8601 string   | Current time in UTC                            |
 
 ---
 
@@ -76,7 +76,7 @@ identical probe metrics with `endpoint="/livez"` label.
 
 ## `GET /readyz`
 
-**Purpose**: Readiness probe. Answers: *can this process safely receive traffic?*
+**Purpose**: Readiness probe. Answers: _can this process safely receive traffic?_
 Returns 200 only when all declared dependencies are ready and analytics jobs are
 not stale.
 
@@ -105,13 +105,13 @@ probe path). State is updated by background startup and health checks.
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `status` | `"ready"` | Service can receive traffic |
-| `timestamp` | ISO-8601 string | Current time in UTC |
-| `dependencies` | object | Per-dependency readiness (all must be `true`) |
-| `analytics.feeAggregation` | object | Fee aggregation job staleness |
-| `analytics.gasAnalytics` | object | Gas analytics job staleness |
+| Field                      | Type            | Description                                   |
+| -------------------------- | --------------- | --------------------------------------------- |
+| `status`                   | `"ready"`       | Service can receive traffic                   |
+| `timestamp`                | ISO-8601 string | Current time in UTC                           |
+| `dependencies`             | object          | Per-dependency readiness (all must be `true`) |
+| `analytics.feeAggregation` | object          | Fee aggregation job staleness                 |
+| `analytics.gasAnalytics`   | object          | Gas analytics job staleness                   |
 
 ### Response: 503 Service Unavailable (not ready)
 
@@ -136,10 +136,10 @@ probe path). State is updated by background startup and health checks.
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `status` | `"not_ready"` | Service should not receive traffic yet |
-| `blockers` | string[] | Names of dependencies that are not ready |
+| Field      | Type          | Description                              |
+| ---------- | ------------- | ---------------------------------------- |
+| `status`   | `"not_ready"` | Service should not receive traffic yet   |
+| `blockers` | string[]      | Names of dependencies that are not ready |
 
 ### Response: 503 Service Unavailable (shutting down)
 
@@ -161,12 +161,20 @@ See existing documentation — this endpoint is unchanged by #918.
 
 ---
 
-## `GET /health/detailed`
+## `GET /health/dependencies`
 
 **Purpose**: Performs live probes against DB, RPC, and cache. Use for incident
 investigation, not for automated probing.
 
-See existing documentation — this endpoint is unchanged by #918.
+The response includes live status for all dependency groups (database, cache,
+RPC, indexer, workers, P2P, and cold storage). A required dependency reporting
+`unhealthy` yields HTTP 503; healthy or degraded status yields HTTP 200. Because
+the endpoint performs I/O, do not use it as a liveness or frequent readiness
+probe.
+
+`/health/detailed` remains an exact compatibility alias. `/health` is a
+low-cost summary from cached readiness state; use `/readyz` for load-balancer
+traffic decisions.
 
 ---
 
@@ -189,6 +197,7 @@ health_probe_duration_seconds_bucket{endpoint="/healthz",le="0.01"} 1450
 ```
 
 OTel metrics (for OTLP exporters):
+
 - `health.probe.requests` (Counter) — labels: `endpoint`, `status_code`
 - `health.probe.duration` (Histogram, unit: `s`) — labels: `endpoint`
 

@@ -8,6 +8,7 @@ const { sharedMockServer } = vi.hoisted(() => ({
     getLedger: vi.fn(),
   },
 }));
+const { mockAxiosGet } = vi.hoisted(() => ({ mockAxiosGet: vi.fn() }));
 
 vi.mock('@stellar/stellar-sdk', () => {
   function MockServer() {
@@ -21,6 +22,10 @@ vi.mock('../../src/cache', () => ({
   cacheSet: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('axios', () => ({
+  default: { get: mockAxiosGet },
+}));
+
 vi.mock('../../src/config', () => ({
   config: {
     profile: { name: 'devnet' },
@@ -30,8 +35,17 @@ vi.mock('../../src/config', () => ({
   },
 }));
 
+vi.mock('../../src/metrics', () => ({
+  rpcCallDuration: { observe: vi.fn() },
+  rpcCallErrorsTotal: { inc: vi.fn() },
+  rpcCallRetriesTotal: { inc: vi.fn() },
+  horizonCallDuration: { observe: vi.fn() },
+  horizonCallErrorsTotal: { inc: vi.fn() },
+}));
+
 import {
   fetchEvents,
+  fetchLedgerMetadata,
   getLatestLedger,
   getTransaction,
   getRpcWebsocketUrl,
@@ -91,6 +105,19 @@ describe('rpc module', () => {
       expect(result).toHaveLength(0);
     });
 
+    it('fails rather than returning a partial result when RPC cursors repeat', async () => {
+      const page = Array.from({ length: 200 }, (_, index) => ({
+        contractId: 'CA...',
+        txHash: `tx-${index}`,
+        ledger: 1005,
+        topic: [],
+        pagingToken: 'repeated-token',
+      }));
+      sharedMockServer.getEvents.mockResolvedValue({ events: page });
+
+      await expect(fetchEvents(1000, 1010)).rejects.toThrow('Repeated cursor detected');
+    });
+
     it('retries on rate limit error', async () => {
       const rateLimitError = { response: { status: 429 } };
       sharedMockServer.getEvents
@@ -138,6 +165,35 @@ describe('rpc module', () => {
       sharedMockServer.getLatestLedger.mockResolvedValue({ sequence: '12345' });
       const result = await getLatestLedger();
       expect(result).toBe(12345);
+    });
+  });
+
+  describe('fetchLedgerMetadata', () => {
+    it('falls back to RPC when Horizon is unavailable', async () => {
+      mockAxiosGet.mockRejectedValue(new Error('Horizon unavailable'));
+      sharedMockServer.getLedger.mockResolvedValue({
+        id: 'rpc-ledger-hash',
+        prevHash: 'previous-hash',
+        closedAt: '2025-01-01T00:00:00Z',
+        transactionCount: 3,
+      });
+
+      const ledger = await fetchLedgerMetadata(1234);
+
+      expect(ledger).toMatchObject({
+        sequence: 1234,
+        hash: 'rpc-ledger-hash',
+        previousLedgerHash: 'previous-hash',
+        txCount: 3,
+      });
+      expect(sharedMockServer.getLedger).toHaveBeenCalledWith(1234);
+    });
+
+    it('surfaces failure when both Horizon and RPC are unavailable', async () => {
+      mockAxiosGet.mockRejectedValue(new Error('Horizon unavailable'));
+      sharedMockServer.getLedger.mockRejectedValue(new Error('RPC unavailable'));
+
+      await expect(fetchLedgerMetadata(1234)).rejects.toThrow('RPC unavailable');
     });
   });
 

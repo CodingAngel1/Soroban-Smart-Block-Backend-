@@ -6,7 +6,7 @@ import {
   normalizeTierConfig,
   tieredRateLimit,
 } from '../src/middleware/rateLimit';
-import { checkTokenBucket } from '../src/middleware/tokenBucket';
+import { checkTokenBucket, TIER_LIMITS } from '../src/middleware/tokenBucket';
 
 // getRateLimitTier hashes the incoming API key with SHA-256 before comparing
 // it against the configured key sets (#715 — plaintext keys are never
@@ -16,10 +16,34 @@ function hashApiKey(raw: string): string {
 }
 
 vi.mock('../src/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn() } }));
+vi.mock('../src/config', () => ({
+  config: {
+    rateLimitPublicWindowMs: 60_000,
+    rateLimitPublicMax: 100,
+    rateLimitDeveloperWindowMs: 60_000,
+    rateLimitDeveloperMax: 300,
+    rateLimitPremiumWindowMs: 60_000,
+    rateLimitPremiumMax: 1000,
+    rateLimitAdaptiveEnabled: false,
+  },
+}));
+vi.mock('../src/db', () => ({ prismaRead: {} }));
+vi.mock('../src/cache', () => ({ buildCacheKey: (...parts: string[]) => parts.join(':') }));
 vi.mock('../src/middleware/tokenBucket', () => ({
   checkTokenBucket: vi.fn(),
   setRateLimitRedisClient: vi.fn(),
 }));
+vi.mock('../src/cache', () => ({
+  buildCacheKey: (...parts: string[]) => parts.join(':'),
+}));
+vi.mock('../src/middleware/tokenBucket', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/middleware/tokenBucket')>();
+  return {
+    ...actual,
+    checkTokenBucket: vi.fn(),
+    setRateLimitRedisClient: vi.fn(),
+  };
+});
 
 const mockCheck = vi.mocked(checkTokenBucket);
 
@@ -42,10 +66,12 @@ function makeRes(): {
   res: Response;
   status: ReturnType<typeof vi.fn>;
   json: ReturnType<typeof vi.fn>;
+  setHeader: ReturnType<typeof vi.fn>;
 } {
   const json = vi.fn();
   const status = vi.fn().mockReturnValue({ json });
-  return { res: { status, json } as unknown as Response, status, json };
+  const setHeader = vi.fn();
+  return { res: { status, json, setHeader } as unknown as Response, status, json, setHeader };
 }
 
 describe('rate limit configuration', () => {
@@ -70,6 +96,16 @@ describe('rate limit configuration', () => {
     );
     expect(tier).toBe('premium');
   });
+
+  it('keeps Redis token-bucket limits aligned with the configured local limits', () => {
+    const localLimits = normalizeTierConfig();
+
+    expect(TIER_LIMITS.unauthenticated.perMinute).toBe(60);
+    expect(TIER_LIMITS.free.perMinute).toBe(localLimits.free.max);
+    expect(TIER_LIMITS.developer.perMinute).toBe(localLimits.developer.max);
+    expect(TIER_LIMITS.pro.perMinute).toBe(localLimits.premium.max);
+    expect(TIER_LIMITS.enterprise.perMinute).toBe(localLimits.enterprise.max);
+  });
 });
 
 describe('tieredRateLimit', () => {
@@ -77,6 +113,7 @@ describe('tieredRateLimit', () => {
 
   beforeEach(() => {
     next = vi.fn();
+    mockCheck.mockClear();
     mockCheck.mockResolvedValue({
       allowed: true,
       limit: 100,
@@ -96,7 +133,7 @@ describe('tieredRateLimit', () => {
     const req = makeReq({
       apiKey: { id: 'k', keyName: 'n', developerId: 'd', tier: 'pro' },
     } as any);
-    const { res, setHeader } = makeRes();
+    const { res } = makeRes();
     await tieredRateLimit(req, res, next);
     // The function should set rate limit headers or handle the request
     expect(res).toBeDefined();
@@ -106,6 +143,62 @@ describe('tieredRateLimit', () => {
     const req = makeReq({ headers: {} });
     const { res } = makeRes();
     await expect(tieredRateLimit(req, res, next)).resolves.not.toThrow();
+    expect(mockCheck).toHaveBeenCalledWith(
+      '127.0.0.1',
+      'unauthenticated',
+      'GET',
+      '/test',
+      undefined,
+    );
+  });
+
+  it('returns 429 with retry headers when an unauthenticated request exceeds its limit', async () => {
+    mockCheck.mockResolvedValue({
+      allowed: false,
+      limit: 60,
+      remaining: 0,
+      resetAt: 9999999999,
+      tier: 'unauthenticated',
+    });
+    const { res, status, json, setHeader } = makeRes();
+    await tieredRateLimit(makeReq(), res, next);
+
+    expect(status).toHaveBeenCalledWith(429);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Rate limit exceeded', tier: 'unauthenticated' }),
+    );
+    expect(setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '60');
+    expect(setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '0');
+    expect(setHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('applies the API-key tier override in local fallback and reports a 429', async () => {
+    const apiKey = {
+      id: `rate-limit-test-${crypto.randomUUID()}`,
+      keyName: 'test',
+      developerId: 'test-developer',
+      tier: 'developer',
+      rateLimitOverride: 1,
+    };
+    const req = makeReq();
+    req.apiKey = apiKey;
+    const allowedResponse = makeRes();
+    const limitedResponse = makeRes();
+
+    await tieredRateLimit(req, allowedResponse.res, next);
+    await tieredRateLimit(req, limitedResponse.res, next);
+
+    expect(mockCheck).not.toHaveBeenCalled();
+    expect(allowedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '1');
+    expect(allowedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Tier', 'developer');
+    expect(limitedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '1');
+    expect(limitedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '0');
+    expect(limitedResponse.status).toHaveBeenCalledWith(429);
+    expect(limitedResponse.setHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
+    expect(limitedResponse.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Rate limit exceeded', tier: 'developer' }),
+    );
   });
 });
 

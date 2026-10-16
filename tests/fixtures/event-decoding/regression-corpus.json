@@ -1,0 +1,78 @@
+{
+  "corpusVersion": 1,
+  "description": "Reviewed deterministic Soroban contract-event XDR fixtures. Address values use synthetic keys; the inputs are not copied from a live network.",
+  "protocolVersionsValidated": [20, 21],
+  "cases": [
+    {
+      "id": "sep41-transfer-i128",
+      "source": "SEP-41 transfer event shape, encoded with the Stellar SDK",
+      "topics": [
+        "AAAADwAAAAh0cmFuc2Zlcg==",
+        "AAAAEgAAAAAAAAAAAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+        "AAAAEgAAAAAAAAAAAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
+      ],
+      "data": "AAAACgAAAAAAAAAAAAAAAAF9eEA=",
+      "expected": {
+        "eventType": "transfer",
+        "topicSymbol": "transfer",
+        "decoded": {
+          "event": "transfer",
+          "from": "GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H",
+          "to": "GABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEJXA",
+          "amount": "2.5000000"
+        }
+      }
+    },
+    {
+      "id": "sep41-mint-i128",
+      "source": "SEP-41 mint event shape, encoded with the Stellar SDK",
+      "topics": [
+        "AAAADwAAAARtaW50",
+        "AAAAEgAAAAAAAAAAAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=",
+        "AAAAEgAAAAAAAAAABAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
+      ],
+      "data": "AAAACgAAAAAAAAAAAAAAAAC7ruA=",
+      "expected": {
+        "eventType": "mint",
+        "topicSymbol": "mint",
+        "decoded": {
+          "event": "mint",
+          "admin": "GABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQHGPC",
+          "to": "GACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAJJHP",
+          "amount": "1.2300000"
+        }
+      }
+    },
+    {
+      "id": "custom-swap-string-data",
+      "source": "Generic custom event shape encoded with the Stellar SDK",
+      "topics": ["AAAADwAAAARzd2Fw", "AAAADgAAAAZwb29sLTcAAA=="],
+      "data": "AAAADgAAAAxwb29sLXJlZnJlc2g=",
+      "expected": {
+        "eventType": "swap",
+        "topicSymbol": "swap",
+        "decoded": {
+          "event": "swap",
+          "topics": ["swap", "pool-7"],
+          "data": "pool-refresh"
+        }
+      }
+    },
+    {
+      "id": "malformed-xdr",
+      "source": "Negative fixture for invalid topic and data XDR",
+      "topics": ["not-valid-base64!!!"],
+      "data": "also-bad",
+      "expected": {
+        "eventType": "unknown",
+        "topicSymbol": null,
+        "decoded": {
+          "raw": {
+            "topics": ["not-valid-base64!!!"],
+            "data": "also-bad"
+          }
+        }
+      }
+    }
+  ]
+}

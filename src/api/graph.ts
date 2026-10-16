@@ -138,7 +138,7 @@ const cypherQuerySchema = z.object({
  *                 description: Query parameters
  *               timeout:
  *                 type: integer
- *                 description: 'Query timeout in ms (default: 5000)'
+ *                 description: "Query timeout in ms (default: 5000)"
  *     responses:
  *       200:
  *         description: Query results

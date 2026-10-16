@@ -1,6 +1,6 @@
 # TypeScript SDK — Design (DX01)
 
-Status: implemented · Package: `packages/client` (`@soroban-explorer/client` 1.1.0)
+Status: implemented · Package: `packages/client` (`@soroban-explorer/client` 1.2.0)
 
 ## Goals
 

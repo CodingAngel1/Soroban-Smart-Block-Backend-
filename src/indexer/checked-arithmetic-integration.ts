@@ -13,6 +13,7 @@ import {
   didOverflow,
 } from './checked-arithmetic-decoder';
 import { prismaRead as prisma } from '../db';
+import { config } from '../config';
 import { logger } from '../logger';
 
 export interface CheckedArithmeticTransactionContext {
@@ -93,7 +94,12 @@ export async function storeCheckedArithmeticAnalysis(
 
     // Update transaction with enriched data
     await prisma.transaction.update({
-      where: { hash: context.transactionHash },
+      where: {
+        network_hash: {
+          network: config.stellarNetwork,
+          hash: context.transactionHash,
+        },
+      },
       data: {
         functionArgs: {
           _checkedArithmetic: {
