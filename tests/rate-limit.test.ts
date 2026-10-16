@@ -16,8 +16,22 @@ function hashApiKey(raw: string): string {
 }
 
 vi.mock('../src/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn() } }));
-vi.mock('../src/db', () => ({
-  prismaRead: { rateLimitOverride: { findUnique: vi.fn() } },
+vi.mock('../src/config', () => ({
+  config: {
+    rateLimitPublicWindowMs: 60_000,
+    rateLimitPublicMax: 100,
+    rateLimitDeveloperWindowMs: 60_000,
+    rateLimitDeveloperMax: 300,
+    rateLimitPremiumWindowMs: 60_000,
+    rateLimitPremiumMax: 1000,
+    rateLimitAdaptiveEnabled: false,
+  },
+}));
+vi.mock('../src/db', () => ({ prismaRead: {} }));
+vi.mock('../src/cache', () => ({ buildCacheKey: (...parts: string[]) => parts.join(':') }));
+vi.mock('../src/middleware/tokenBucket', () => ({
+  checkTokenBucket: vi.fn(),
+  setRateLimitRedisClient: vi.fn(),
 }));
 vi.mock('../src/cache', () => ({
   buildCacheKey: (...parts: string[]) => parts.join(':'),
@@ -157,6 +171,34 @@ describe('tieredRateLimit', () => {
     expect(setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '0');
     expect(setHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('applies the API-key tier override in local fallback and reports a 429', async () => {
+    const apiKey = {
+      id: `rate-limit-test-${crypto.randomUUID()}`,
+      keyName: 'test',
+      developerId: 'test-developer',
+      tier: 'developer',
+      rateLimitOverride: 1,
+    };
+    const req = makeReq();
+    req.apiKey = apiKey;
+    const allowedResponse = makeRes();
+    const limitedResponse = makeRes();
+
+    await tieredRateLimit(req, allowedResponse.res, next);
+    await tieredRateLimit(req, limitedResponse.res, next);
+
+    expect(mockCheck).not.toHaveBeenCalled();
+    expect(allowedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '1');
+    expect(allowedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Tier', 'developer');
+    expect(limitedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Limit', '1');
+    expect(limitedResponse.setHeader).toHaveBeenCalledWith('X-RateLimit-Remaining', '0');
+    expect(limitedResponse.status).toHaveBeenCalledWith(429);
+    expect(limitedResponse.setHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
+    expect(limitedResponse.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Rate limit exceeded', tier: 'developer' }),
+    );
   });
 });
 

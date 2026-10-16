@@ -60,7 +60,88 @@ export type ResponseOf<K extends OperationId> = OperationTypes[K]['response'];
 export interface Page<T> {
   data: T[];
   hasNext?: boolean;
+  hasMore?: boolean;
   nextCursor?: string | number | null;
+  cursor?: string | number | null;
+  page?: number;
+  pages?: number;
+  total?: number;
+  pagination?: {
+    hasNext?: boolean;
+    hasMore?: boolean;
+    nextCursor?: string | number | null;
+    cursor?: string | number | null;
+    page?: number;
+    pages?: number;
+    total?: number;
+  };
+}
+
+interface NormalizedPage {
+  items: unknown[];
+  nextCursor?: string | number;
+  hasNext: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function paginationValue(
+  response: Record<string, unknown>,
+  nested: Record<string, unknown>,
+  key: string,
+): unknown {
+  return response[key] ?? nested[key];
+}
+
+function normalizePage(response: unknown, operationId: string, pageLimit: unknown): NormalizedPage {
+  if (Array.isArray(response)) return { items: response, hasNext: false };
+  if (!isRecord(response) || !Array.isArray(response.data)) {
+    throw new SorobanError(
+      `Invalid paginated response for ${operationId}: expected an array or an object with a data array`,
+    );
+  }
+
+  const nested = isRecord(response.pagination) ? response.pagination : {};
+  const cursor =
+    paginationValue(response, nested, 'nextCursor') ?? paginationValue(response, nested, 'cursor');
+  const nextCursor =
+    (typeof cursor === 'string' && cursor !== '') ||
+    (typeof cursor === 'number' && Number.isFinite(cursor))
+      ? cursor
+      : undefined;
+  const explicitHasNext = paginationValue(response, nested, 'hasNext');
+  const explicitHasMore = paginationValue(response, nested, 'hasMore');
+  const currentPage = paginationValue(response, nested, 'page');
+  const totalPages = paginationValue(response, nested, 'pages');
+  const totalItems = paginationValue(response, nested, 'total');
+  let hasNext =
+    typeof explicitHasNext === 'boolean'
+      ? explicitHasNext
+      : typeof explicitHasMore === 'boolean'
+        ? explicitHasMore
+        : nextCursor !== undefined;
+
+  if (
+    explicitHasNext === undefined &&
+    explicitHasMore === undefined &&
+    typeof currentPage === 'number' &&
+    typeof totalPages === 'number'
+  ) {
+    hasNext = currentPage < totalPages;
+  } else if (
+    explicitHasNext === undefined &&
+    explicitHasMore === undefined &&
+    typeof currentPage === 'number' &&
+    typeof totalItems === 'number' &&
+    typeof pageLimit === 'number' &&
+    pageLimit > 0
+  ) {
+    hasNext = currentPage * pageLimit < totalItems;
+  }
+
+  return { items: response.data, nextCursor, hasNext };
 }
 
 function defaultFetch(): FetchLike {
@@ -112,9 +193,11 @@ export class SorobanClient {
   }
 
   /**
-   * Iterate every item of a paginated list operation. Supports the cursor
-   * envelope (`{data, hasNext, nextCursor}`) and falls back to page/offset
-   * pagination (`page` query param) when no cursor is returned.
+   * Iterate every item of a paginated list operation. Supports arrays,
+   * cursor envelopes (`nextCursor` / `cursor`), and page envelopes (`page`
+   * with `pages` or `total`). A `pagination` sub-object is also supported.
+   * Throws if the response cannot be continued consistently or maxPages is
+   * reached before the API reports the last page.
    */
   paginate<K extends OperationId>(
     operationId: K,
@@ -127,28 +210,54 @@ export class SorobanClient {
     options: { maxPages?: number } = {},
   ): AsyncGenerator<unknown, void, undefined> {
     const maxPages = options.maxPages ?? 1000;
+    if (!Number.isSafeInteger(maxPages) || maxPages < 1) {
+      throw new RangeError('maxPages must be a positive safe integer');
+    }
     const base = (params ?? {}) as CallParams;
     const spec = OPS[operationId];
     if (!spec) throw new SorobanError(`Unknown operation: ${operationId}`);
     const hasPage = spec.query.some((q) => q.name === 'page');
+    const seenCursors = new Set<string>();
+    const initialCursor = base.query?.cursor;
     let cursor: string | number | undefined;
+    if (typeof initialCursor === 'string' || typeof initialCursor === 'number') {
+      seenCursors.add(String(initialCursor));
+      cursor = initialCursor;
+    }
+    const initialPage = typeof base.query?.page === 'number' ? base.query.page : 1;
+    const pageLimit = base.query?.limit;
     for (let page = 1; page <= maxPages; page++) {
       const query: Record<string, unknown> = { ...(base.query ?? {}) };
-      if (cursor !== undefined) query.cursor = cursor;
-      else if (hasPage && page > 1) query.page = page;
+      if (cursor !== undefined) {
+        query.cursor = cursor;
+        delete query.page;
+      } else if (hasPage) {
+        query.page = initialPage + page - 1;
+      }
       const invoke = this.call as unknown as (id: string, p: CallParams) => Promise<unknown>;
-      const res = (await invoke.call(this, operationId, { ...base, query })) as
-        Partial<Page<unknown>> | unknown[];
-      const items = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
-      for (const item of items) yield item;
-      if (Array.isArray(res) || items.length === 0) return;
-      if (res.nextCursor !== undefined && res.nextCursor !== null) {
-        cursor = res.nextCursor;
+      const response = await invoke.call(this, operationId, { ...base, query });
+      const result = normalizePage(response, operationId, pageLimit);
+      for (const item of result.items) yield item;
+      if (result.items.length === 0 || !result.hasNext) return;
+
+      if (result.nextCursor !== undefined) {
+        const cursorKey = String(result.nextCursor);
+        if (seenCursors.has(cursorKey)) {
+          throw new SorobanError(`Pagination for ${operationId} repeated cursor ${cursorKey}`);
+        }
+        seenCursors.add(cursorKey);
+        cursor = result.nextCursor;
         continue;
       }
-      if (res.hasNext === true && hasPage && cursor === undefined) continue;
-      return;
+      if (!hasPage) {
+        throw new SorobanError(
+          `Pagination for ${operationId} reports more data but provides no cursor or page parameter`,
+        );
+      }
+      cursor = undefined;
     }
+
+    throw new SorobanError(`Pagination for ${operationId} exceeded maxPages (${maxPages})`);
   }
 
   /** Untyped internal entry used by the curated resources below. */

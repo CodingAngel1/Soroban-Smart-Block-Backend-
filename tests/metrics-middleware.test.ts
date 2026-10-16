@@ -3,12 +3,23 @@ import type { Request, Response, NextFunction } from 'express';
 
 // Stub prom-client metrics
 vi.mock('../src/metrics', () => ({
+  apiSloRequestDuration: { observe: vi.fn() },
+  apiSloRequestsTotal: { inc: vi.fn() },
   httpRequestDuration: { observe: vi.fn() },
   httpRequestTotal: { inc: vi.fn() },
 }));
 
-import { metricsMiddleware } from '../src/middleware/metricsMiddleware';
-import { httpRequestDuration, httpRequestTotal } from '../src/metrics';
+import {
+  classifyApiEndpoint,
+  classifyApiSloOutcome,
+  metricsMiddleware,
+} from '../src/middleware/metricsMiddleware';
+import {
+  apiSloRequestDuration,
+  apiSloRequestsTotal,
+  httpRequestDuration,
+  httpRequestTotal,
+} from '../src/metrics';
 
 type FinishListener = () => void;
 
@@ -113,5 +124,69 @@ describe('metricsMiddleware', () => {
     triggerFinish();
     const [labels] = (httpRequestTotal.inc as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(labels.status_code).toBe('500');
+  });
+
+  it.each([
+    ['/api/v1/transactions', 'GET', 'read'],
+    ['/api/v1/transactions', 'POST', 'write'],
+    ['/api/v1/simulate', 'GET', 'compute'],
+    ['/api/v1/dex/analyze', 'GET', 'compute'],
+    ['/api/graphql', 'POST', 'graphql'],
+    ['/healthz', 'GET', null],
+  ] as const)('classifies %s %s into its bounded endpoint class', (path, method, expected) => {
+    expect(classifyApiEndpoint(path, method)).toBe(expected);
+  });
+
+  it.each([
+    [200, 'good'],
+    [302, 'good'],
+    [400, 'excluded'],
+    [429, 'excluded'],
+    [500, 'bad'],
+  ] as const)('classifies HTTP %s as SLO outcome %s', (statusCode, expected) => {
+    expect(classifyApiSloOutcome(statusCode)).toBe(expected);
+  });
+
+  it('records class-level availability and latency for failed API responses', () => {
+    const req = makeReq({ path: '/api/v1/transactions', method: 'GET' });
+    const { res, triggerFinish } = makeRes();
+    res.statusCode = 503;
+
+    metricsMiddleware(req, res, vi.fn() as NextFunction);
+    triggerFinish();
+
+    expect(apiSloRequestsTotal.inc).toHaveBeenCalledWith({
+      endpoint_class: 'read',
+      outcome: 'bad',
+    });
+    expect(apiSloRequestDuration.observe).toHaveBeenCalledWith(
+      { endpoint_class: 'read', outcome: 'bad' },
+      expect.any(Number),
+    );
+  });
+
+  it('excludes client and rate-limit responses from availability error budgets', () => {
+    const req = makeReq({ path: '/api/v1/transactions', method: 'GET' });
+    const { res, triggerFinish } = makeRes();
+    res.statusCode = 429;
+
+    metricsMiddleware(req, res, vi.fn() as NextFunction);
+    triggerFinish();
+
+    expect(apiSloRequestsTotal.inc).toHaveBeenCalledWith({
+      endpoint_class: 'read',
+      outcome: 'excluded',
+    });
+  });
+
+  it('does not add endpoint-class SLO samples for operational endpoints', () => {
+    const req = makeReq({ path: '/readyz', method: 'GET' });
+    const { res, triggerFinish } = makeRes();
+
+    metricsMiddleware(req, res, vi.fn() as NextFunction);
+    triggerFinish();
+
+    expect(apiSloRequestsTotal.inc).not.toHaveBeenCalled();
+    expect(apiSloRequestDuration.observe).not.toHaveBeenCalled();
   });
 });
