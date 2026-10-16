@@ -205,6 +205,11 @@ export const indexerLedgerCloseTimestamp = new Gauge({
   registers: [registry],
 });
 
+export function setIndexerProgress(network: string, lastLedger: number, chainTip: number): void {
+  indexerLastLedger.set({ network }, lastLedger);
+  indexerIngestionLag.set({ network }, Math.max(0, chainTip - lastLedger));
+}
+
 export const indexerLedgersProcessed = new Counter({
   name: 'indexer_ledgers_processed_total',
   help: 'Total number of ledgers processed',
@@ -236,7 +241,7 @@ export const indexerPipelineStageDuration = new Histogram({
 export const indexerPipelineStageLag = new Gauge({
   name: 'indexer_pipeline_stage_lag_ledgers',
   help: 'Ledger distance lag for each indexer pipeline stage',
-  labelNames: ['stage'],
+  labelNames: ['network', 'stage'],
   registers: [registry],
 });
 
@@ -318,14 +323,14 @@ export const cronJobLastSuccessTimestamp = new Gauge({
 export const indexerErrorQueueDepth = new Gauge({
   name: 'indexer_error_queue_depth',
   help: 'Number of items currently in the indexer error queue by queue type',
-  labelNames: ['queue'],
+  labelNames: ['network', 'queue'],
   registers: [registry],
 });
 
 export const indexerErrorRetriesTotal = new Counter({
   name: 'indexer_error_retries_total',
   help: 'Total number of retries performed for failed indexer items',
-  labelNames: ['type'],
+  labelNames: ['network', 'type'],
   registers: [registry],
 });
 

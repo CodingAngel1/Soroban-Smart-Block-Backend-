@@ -86,7 +86,7 @@ describe('error queue metrics (#912)', () => {
     });
 
     const out = await metricText('indexer_error_retries_total');
-    expect(out).toContain('indexer_error_retries_total{type="transaction"} 1');
+    expect(out).toContain('indexer_error_retries_total{network="testnet",type="transaction"} 1');
   });
 
   it('does not count the first failure as a retry', async () => {
@@ -148,8 +148,10 @@ describe('error queue metrics (#912)', () => {
     expect(status.deadCount).toBe(7);
 
     const out = await metricText('indexer_error_queue_depth');
-    expect(out).toContain('indexer_error_queue_depth{queue="pending"} 42');
-    expect(out).toContain('indexer_error_queue_depth{queue="dead"} 7');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="pending"} 42');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="dead"} 7');
+    expect(db.count).toHaveBeenCalledWith({ where: { dead: false } });
+    expect(deadDb.count).toHaveBeenCalledWith();
   });
 
   it('reports the oldest dead-letter age for the active network', async () => {
@@ -198,8 +200,8 @@ describe('error queue metrics (#912)', () => {
     await retryFailures(handler);
 
     const out = await metricText('indexer_error_queue_depth');
-    expect(out).toContain('indexer_error_queue_depth{queue="pending"} 0');
-    expect(out).toContain('indexer_error_queue_depth{queue="dead"} 0');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="pending"} 0');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="dead"} 0');
   });
 
   it('classifies failure reasons into bounded buckets via failure-parser', () => {

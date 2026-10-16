@@ -1,6 +1,7 @@
 import { prismaWrite as prisma } from '../db';
 import { Prisma } from '@prisma/client';
 import { logger } from '../logger';
+import { config } from '../config';
 import { classifyFailureReason } from './failure-parser';
 import { config } from '../config';
 import {
@@ -54,6 +55,7 @@ export function isPoisonError(error: unknown): boolean {
 
 /** Persist a failed decode item. Idempotent — increments retryCount on conflict. */
 export async function enqueueFailure(item: FailedItemInput): Promise<void> {
+  const network = config.stellarNetwork;
   const err = item.error instanceof Error ? item.error : new Error(String(item.error));
   const poisonDetected = isPoisonError(item.error);
 
@@ -67,7 +69,7 @@ export async function enqueueFailure(item: FailedItemInput): Promise<void> {
   if (existing) {
     currentRetryCount = existing.retryCount + 1;
     // #912 — each re-enqueue is one retry; count it per item type.
-    indexerErrorRetriesTotal.inc({ type: item.itemType });
+    indexerErrorRetriesTotal.inc({ network, type: item.itemType });
     if (currentRetryCount >= MAX_RETRIES || poisonDetected) {
       isDead = true;
     }

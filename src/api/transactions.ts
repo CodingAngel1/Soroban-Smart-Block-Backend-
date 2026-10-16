@@ -123,6 +123,44 @@ transactionRouter.get(
 
 /**
  * @swagger
+ * /transactions/{hash}/xdr:
+ *   get:
+ *     summary: Retrieve the retained base64 transaction envelope XDR
+ *     tags: [Transactions]
+ *     parameters:
+ *       - in: path
+ *         name: hash
+ *         required: true
+ *         schema: { type: string }
+ *         description: Transaction hash
+ *     responses:
+ *       200:
+ *         description: Base64-encoded transaction envelope XDR
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               required: [transactionHash, encoding, xdr]
+ *               properties:
+ *                 transactionHash: { type: string }
+ *                 encoding: { type: string, enum: [base64] }
+ *                 xdr: { type: string, description: Base64-encoded Stellar transaction envelope XDR }
+ *       404:
+ *         description: Transaction or its raw XDR is not available
+ */
+transactionRouter.get(
+  '/:hash/xdr',
+  asyncHandler(async (req: Request, res: Response) => {
+    const tx = await transactionService.getRawXdrByHash(req.params.hash);
+    if (!tx) return res.status(404).json({ error: 'Transaction not found' });
+    if (!tx.rawXdr) return res.status(404).json({ error: 'Raw transaction XDR is not available' });
+
+    res.json({ transactionHash: tx.hash, encoding: 'base64', xdr: tx.rawXdr });
+  }),
+);
+
+/**
+ * @swagger
  * /transactions/{hash}:
  *   get:
  *     summary: Get a single transaction by hash

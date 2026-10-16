@@ -54,7 +54,7 @@
       }
     ]
   },
-  "description": "Soroban Smart Block Explorer — API, Indexer, Cache, and Database health overview. Issues #908 #909.",
+  "description": "Soroban Smart Block Explorer — API, per-network indexer, cache, and database health overview. Issues #908 #909.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -258,7 +258,7 @@
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "indexer_ingestion_lag_ledgers",
           "instant": true,
-          "legendFormat": "lag",
+          "legendFormat": "{{network}} lag",
           "refId": "A"
         }
       ],
@@ -306,7 +306,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "indexer_ingestion_lag_ledgers",
-          "legendFormat": "Indexer lag (ledgers behind tip)",
+          "legendFormat": "{{network}} indexer lag (ledgers behind tip)",
           "refId": "A"
         },
         {

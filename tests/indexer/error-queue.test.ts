@@ -127,6 +127,11 @@ describe('retryFailures', () => {
     const handler = vi.fn().mockResolvedValue(undefined);
     await retryFailures(handler);
 
+    expect(db.findMany).toHaveBeenCalledWith({
+      where: { dead: false },
+      take: 50,
+      orderBy: { createdAt: 'asc' },
+    });
     expect(handler).toHaveBeenCalledOnce();
     expect(db.delete).toHaveBeenCalledWith({ where: { id: 10 } });
   });

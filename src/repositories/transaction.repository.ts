@@ -49,6 +49,13 @@ export class TransactionRepository {
       },
     });
   }
+
+  async findRawXdrByHash(hash: string) {
+    return prisma.transaction.findUnique({
+      where: { hash },
+      select: { hash: true, rawXdr: true },
+    });
+  }
 }
 
 export const transactionRepository = new TransactionRepository();
