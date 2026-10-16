@@ -191,6 +191,33 @@ describe('cache — Redis error handling (simulated)', () => {
     vi.unmock('redis');
     vi.stubEnv('TESTNET_CACHE_URL', 'memory://');
   });
+
+  it('falls back to its local value when a connected Redis write fails', async () => {
+    vi.resetModules();
+    vi.doMock('redis', () => ({
+      createClient: () => ({
+        on: vi.fn(),
+        connect: vi.fn().mockResolvedValue(undefined),
+        multi: vi.fn().mockReturnValue({
+          set: vi.fn().mockReturnThis(),
+          exec: vi.fn().mockRejectedValue(new Error('ECONNRESET')),
+        }),
+        quit: vi.fn().mockResolvedValue(undefined),
+        disconnect: vi.fn(),
+      }),
+    }));
+    vi.stubEnv('TESTNET_CACHE_URL', 'redis://localhost:6379');
+
+    const mod = await import('../src/cache');
+    mod.cacheClear();
+    await mod.cacheSet('write-outage-key', { value: 42 });
+
+    expect(mod.cacheBackendType()).toBe('memory');
+    expect(await mod.cacheGet('write-outage-key')).toEqual({ value: 42 });
+
+    vi.unmock('redis');
+    vi.stubEnv('TESTNET_CACHE_URL', 'memory://');
+  });
 });
 
 // ── Phase 1: cacheConnect / cacheClose lifecycle ──────────────────────────────

@@ -81,7 +81,7 @@ src/
 ├── config.ts                   # Configuration from env vars
 ├── db.ts                       # Prisma client (read/write instances)
 │
-├── api/                        # Route handlers (144 files)
+├── api/                        # Route handlers (see route-validator commands below)
 │   ├── router.ts               # Main route aggregator
 │   ├── transactions.ts         # GET /transactions (paginated, filters)
 │   ├── events.ts               # GET /events (type-specific)
@@ -92,7 +92,7 @@ src/
 │   ├── mev.ts                  # MEV detection and analysis
 │   ├── sandbox.ts              # Deterministic contract simulator
 │   ├── privacy.ts              # Privacy protocol analysis
-│   └── [140+ more endpoints]
+│   └── Additional route modules
 │
 ├── indexer/                    # Ledger indexing & decoding
 │   ├── indexer.ts              # Main polling loop + state machine
@@ -102,7 +102,7 @@ src/
 │   ├── sep41-parser.ts         # Token event parsing
 │   ├── xdr-parser.ts           # Low-level XDR decoding
 │   ├── token-metadata.ts       # Token symbol/decimal resolution
-│   └── [15+ more modules]
+│   └── Additional indexer modules
 │
 ├── middleware/                 # Express middleware
 │   ├── asyncHandler.ts         # Try-catch wrapper for async handlers
@@ -110,17 +110,17 @@ src/
 │   ├── rateLimit.ts            # Tiered rate limiting (Redis)
 │   ├── apiKeyAuth.ts           # X-API-Key validation
 │   ├── sanitize.ts             # Input validation/sanitization
-│   └── [10+ more middleware]
+│   └── Additional middleware
 │
 ├── services/                   # Business logic
 │   ├── stripe-billing.ts       # SaaS billing integration
 │   ├── pricing.ts              # Token price updates
-│   └── [8+ more services]
+│   └── Additional services
 │
 ├── cache.ts                    # Redis client + cache helpers
 ├── logger.ts                   # Structured logging
 ├── health.ts                   # Health check responses
-└── [25+ more files]
+└── Additional backend modules
 
 prisma/
 ├── schema.prisma               # PostgreSQL schema (migrations)
@@ -236,6 +236,8 @@ Full interactive API documentation is available at:
 - **Development**: http://localhost:3000/api/docs (Swagger UI)
 - **Production**: https://explorer.sorobansmart.com/api/docs
 - **Raw spec**: http://localhost:3000/api/docs.json (OpenAPI 3.0)
+- **Compatibility matrix**: [API versioning and endpoint-family compatibility](docs/api-versioning.md)
+- **Cursor contract**: [Stable cursor pagination](docs/cursor-pagination.md)
 
 ### Core Endpoints
 
@@ -343,6 +345,8 @@ For more examples and full endpoint reference, see `/api/docs` or [API_REFERENCE
 | `INDEXER_START_LEDGER`     | `0`     | Starting ledger sequence  |
 | `INDEXER_POLL_INTERVAL_MS` | `5000`  | Poll interval (5 seconds) |
 | `INDEXER_BATCH_SIZE`       | `100`   | Ledgers per batch         |
+| `INDEXER_CATCHUP_WORKERS`  | `4`     | Default parallel historical catch-up workers (1-32) |
+| `INDEXER_CATCHUP_WORKERS_TESTNET` / `_MAINNET` / `_DEVNET` | unset | Optional network-specific worker cap; overrides the default for that network |
 | `INDEXER_MAX_RETRIES`      | `3`     | RPC call retry attempts   |
 | `INDEXER_RETRY_DELAY_MS`   | `1000`  | Retry backoff (ms)        |
 
@@ -409,7 +413,7 @@ See [.env.example](./.env.example) for all available variables.
 
 ```
 ├── src/
-│   ├── api/               # Route handlers (144 endpoints)
+│   ├── api/               # Route handlers; see npm run validate-routes for live counts
 │   ├── indexer/           # Ledger polling & XDR decoding
 │   ├── middleware/        # Express middleware (auth, rate limit, etc.)
 │   ├── services/          # Business logic
@@ -612,11 +616,10 @@ curl http://localhost:3000/startup
 
 ### Monitoring
 
-**Metrics** (Prometheus format):
-
-```bash
-curl http://localhost:3000/metrics
-```
+**Metrics** are exposed in Prometheus format at `/metrics`; scraping is
+restricted by the deployment's metrics authentication/network policy. API
+availability and endpoint-class latency objectives are in
+[docs/api-slo.md](./docs/api-slo.md).
 
 **Logs** (structured JSON):
 
@@ -674,13 +677,14 @@ See [ANALYTICS_ARCHITECTURE.md](./ANALYTICS_ARCHITECTURE.md) for full architectu
 
 Every pull request is gated by the CI pipeline (`.github/workflows/ci.yml`), which runs:
 
-1. **Build** — `npm run build` emits `dist/` + `dist-esm/` and fails if runtime artifacts are missing.
-2. **Migrations** — `prisma migrate deploy` is executed against a fresh PostgreSQL to prove a new clone can boot (this is what the docker-compose `migrate-*` init containers run).
-3. **Lint** — `npm run lint` fails on any ESLint error; warning growth is blocked by a ratchet (`scripts/lint-budget.ts`).
-4. **Type-check** — `npm run typecheck` runs `tsc --noEmit`; error growth is blocked by a ratchet (`scripts/typecheck-budget.ts`, currently 1012 pre-existing errors being paid down toward 0).
-5. **Format** — `npm run format` enforces Prettier.
-6. **Tests** — `npm run test:full` runs the entire Vitest suite (215 files, guarded against silent omission by `scripts/verify-test-coverage.ts`) plus coverage with enforced thresholds.
-7. **Security** — `npm run audit:ci` (npm audit with dated, reviewed exceptions) and GitHub CodeQL.
+1. **Documentation counts** — `npm run docs:check` prevents stale, hard-coded API, test, typecheck, and route counts.
+2. **Type-check and lint** — `npm run typecheck:budget:ci` prints per-file type errors and blocks file-level increases; `npm run lint:budget:ci` blocks warning/error debt increases per file and rule.
+3. **Database and tests** — CI deploys migrations to PostgreSQL, runs `npm run test:guard` to report the current collected test-file count, checks test exclusions, runs the full Vitest suite, and enforces coverage thresholds.
+4. **SDKs and client artifacts** — CI checks generated SDK drift and semver, builds SDK clients, runs quickstarts, and checks the Postman collection.
+5. **Security and monitoring** — CI runs `npm run audit:ci`, CodeQL, and Prometheus rule validation.
+
+For live API/router counts, run `npm run validate-routes`; use
+`npm run validate-routes:ci` to enforce the strict zero-orphan route budget.
 
 ## Migrations
 
@@ -689,6 +693,7 @@ Every pull request is gated by the CI pipeline (`.github/workflows/ci.yml`), whi
 ## Documentation
 
 - **[API_REFERENCE.md](./docs/API_REFERENCE.md)** — Comprehensive API endpoint documentation
+- **[API error troubleshooting](./docs/api-error-troubleshooting.md)** — Request IDs, error envelopes, and support diagnostics
 - **[JSDOC_IMPLEMENTATION_GUIDE.md](./JSDOC_IMPLEMENTATION_GUIDE.md)** — JSDoc standards for route handlers
 - **[SWAGGER_DOCUMENTATION_STRATEGY.md](./SWAGGER_DOCUMENTATION_STRATEGY.md)** — Swagger/OpenAPI documentation
 - **[DATA_MESH_PLATFORM.md](./DATA_MESH_PLATFORM.md)** — Analytics data lake architecture

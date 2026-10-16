@@ -16,6 +16,7 @@ vi.mock('../../src/db', () => {
   const mockCount = vi.fn();
   const mockDeadCreate = vi.fn();
   const mockDeadCount = vi.fn();
+  const mockDeadFindFirst = vi.fn().mockResolvedValue(null);
 
   return {
     prismaWrite: {
@@ -30,10 +31,13 @@ vi.mock('../../src/db', () => {
       deadLetterItem: {
         create: mockDeadCreate,
         count: mockDeadCount,
+        findFirst: mockDeadFindFirst,
       },
     },
   };
 });
+
+vi.mock('../../src/config', () => ({ config: { stellarNetwork: 'testnet' } }));
 
 import {
   enqueueFailure,
@@ -56,6 +60,7 @@ const db = prismaWrite.failedItem as unknown as {
 const deadDb = prismaWrite.deadLetterItem as unknown as {
   create: ReturnType<typeof vi.fn>;
   count: ReturnType<typeof vi.fn>;
+  findFirst: ReturnType<typeof vi.fn>;
 };
 
 async function metricText(name: string): Promise<string> {
@@ -64,6 +69,7 @@ async function metricText(name: string): Promise<string> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  deadDb.findFirst.mockResolvedValue(null);
   registry.resetMetrics();
 });
 
@@ -80,7 +86,7 @@ describe('error queue metrics (#912)', () => {
     });
 
     const out = await metricText('indexer_error_retries_total');
-    expect(out).toContain('indexer_error_retries_total{type="transaction"} 1');
+    expect(out).toContain('indexer_error_retries_total{network="testnet",type="transaction"} 1');
   });
 
   it('does not count the first failure as a retry', async () => {
@@ -112,7 +118,7 @@ describe('error queue metrics (#912)', () => {
     });
 
     const out = await metricText('indexer_error_dlq_total');
-    expect(out).toContain('indexer_error_dlq_total{reason="poison"} 1');
+    expect(out).toContain('indexer_error_dlq_total{network="testnet",reason="poison"} 1');
   });
 
   it('dead-letters exhausted items with a retry_exhausted reason label', async () => {
@@ -128,7 +134,9 @@ describe('error queue metrics (#912)', () => {
     });
 
     const out = await metricText('indexer_error_dlq_total');
-    expect(out).toContain('indexer_error_dlq_total{reason="retry_exhausted"} 1');
+    expect(out).toContain(
+      'indexer_error_dlq_total{network="testnet",reason="retry_exhausted"} 1',
+    );
   });
 
   it('updates queue depth gauges from backpressure reads', async () => {
@@ -140,8 +148,44 @@ describe('error queue metrics (#912)', () => {
     expect(status.deadCount).toBe(7);
 
     const out = await metricText('indexer_error_queue_depth');
-    expect(out).toContain('indexer_error_queue_depth{queue="pending"} 42');
-    expect(out).toContain('indexer_error_queue_depth{queue="dead"} 7');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="pending"} 42');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="dead"} 7');
+    expect(db.count).toHaveBeenCalledWith({ where: { dead: false } });
+    expect(deadDb.count).toHaveBeenCalledWith();
+  });
+
+  it('reports the oldest dead-letter age for the active network', async () => {
+    db.count.mockResolvedValue(0);
+    deadDb.count.mockResolvedValue(1);
+    deadDb.findFirst.mockResolvedValue({ createdAt: new Date(Date.now() - 3600_000) });
+
+    const status = await getQueueBackpressureStatus();
+    expect(status.oldestDeadLetterAgeSeconds).toBeGreaterThanOrEqual(3600);
+
+    const out = await metricText('indexer_error_dlq_oldest_age_seconds');
+    expect(out).toContain('indexer_error_dlq_oldest_age_seconds{network="testnet"}');
+    expect(Number(out.match(/testnet"} ([\d.]+)/)?.[1])).toBeGreaterThanOrEqual(3600);
+  });
+
+  it('resets oldest dead-letter age to zero when the queue is empty', async () => {
+    db.count.mockResolvedValue(0);
+    deadDb.count.mockResolvedValue(0);
+    deadDb.findFirst.mockResolvedValue(null);
+
+    await getQueueBackpressureStatus();
+
+    const out = await metricText('indexer_error_dlq_oldest_age_seconds');
+    expect(out).toContain('indexer_error_dlq_oldest_age_seconds{network="testnet"} 0');
+  });
+
+  it('propagates dead-letter age query failures instead of reporting a false zero', async () => {
+    db.count.mockResolvedValue(0);
+    deadDb.count.mockResolvedValue(0);
+    deadDb.findFirst.mockImplementation(async () => {
+      throw new Error('database unavailable');
+    });
+
+    await expect(getQueueBackpressureStatus()).rejects.toThrow('database unavailable');
   });
 
   it('refreshes depth gauges at the end of a retryFailures cycle', async () => {
@@ -156,8 +200,8 @@ describe('error queue metrics (#912)', () => {
     await retryFailures(handler);
 
     const out = await metricText('indexer_error_queue_depth');
-    expect(out).toContain('indexer_error_queue_depth{queue="pending"} 0');
-    expect(out).toContain('indexer_error_queue_depth{queue="dead"} 0');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="pending"} 0');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="dead"} 0');
   });
 
   it('classifies failure reasons into bounded buckets via failure-parser', () => {

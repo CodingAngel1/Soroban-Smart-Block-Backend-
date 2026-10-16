@@ -41,6 +41,7 @@ vi.mock('../../src/indexer/bn254-tracker', () => ({
 import { prismaRead as prisma } from '../../src/db';
 import { transactionRouter } from '../../src/api/transactions';
 import { eventRouter } from '../../src/api/events';
+import { createCursorScope, encodeOpaqueCursor } from '../../src/utils/opaque-cursor';
 
 // ── Test server setup ─────────────────────────────────────────────────────────
 
@@ -219,11 +220,13 @@ describe('GET /api/v1/transactions', () => {
   });
 
   it('supports cursor-based pagination', async () => {
-    // cursor mode returns hasNext and nextCursor
     (prisma.transaction.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([TX_FIXTURE]);
-    (prisma.transaction.findFirst as ReturnType<typeof vi.fn>)?.mockResolvedValue(null);
+    const scope = createCursorScope('transactions', { limit: 1 });
+    const cursor = encodeOpaqueCursor({ ledgerSequence: 2000, id: 'cuid-start' }, scope);
 
-    const res = await fetch(`${baseUrl}/api/v1/transactions?cursor=2000&limit=1`);
+    const res = await fetch(
+      `${baseUrl}/api/v1/transactions?${new URLSearchParams({ cursor, limit: '1' })}`,
+    );
     const body = await res.json();
 
     expect(res.status).toBe(200);

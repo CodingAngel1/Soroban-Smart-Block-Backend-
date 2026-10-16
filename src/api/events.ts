@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
+import { conditionalCache } from '../middleware/conditionalCache';
 import { validateQuery, validateParams } from '../middleware/validation';
 import { sendValidatedResponse } from '../middleware/responseValidation';
 import { paginationSchema, stellarAddress, safeLabel } from '../schemas/common';
@@ -9,6 +10,7 @@ import {
   eventResponseSchema,
 } from '../schemas/transaction-event-responses';
 import { eventService } from '../services/event.service';
+import { createCursorScope, decodeOpaqueCursor, encodeOpaqueCursor } from '../utils/opaque-cursor';
 
 /**
  * @swagger
@@ -20,16 +22,27 @@ import { eventService } from '../services/event.service';
 export const eventRouter = Router();
 
 // Enhanced schema with filters from common schemas
-const eventListQuerySchema = paginationSchema.merge(
-  z.object({
-    contract: stellarAddress.optional(),
-    type: safeLabel.optional(),
-    topic: safeLabel.optional(),
-    // #914 — cursor-based pagination (preferred for deep pages); page/limit
-    // remains supported as a compatibility shim.
-    cursor: z.string().optional(),
-  }),
-);
+const eventListQuerySchema = paginationSchema
+  .merge(
+    z.object({
+      contract: stellarAddress.optional(),
+      type: safeLabel.optional(),
+      topic: safeLabel.optional(),
+      // #914 — cursor-based pagination (preferred for deep pages); page/limit
+      // remains supported as a compatibility shim.
+      cursor: z.string().max(2048).optional(),
+      pagination: z.literal('cursor').optional(),
+    }),
+  )
+  .superRefine((query, context) => {
+    if (query.pagination === 'cursor' && query.page !== 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['page'],
+        message: 'page cannot be used with cursor pagination',
+      });
+    }
+  });
 
 /**
  * @swagger
@@ -53,7 +66,7 @@ const eventListQuerySchema = paginationSchema.merge(
  *       - in: query
  *         name: page
  *         schema: { type: integer, minimum: 1, default: 1 }
- *         description: 1-based page number (offset pagination)
+ *         description: 1-based page number for legacy offset pagination; do not combine with pagination=cursor
  *       - in: query
  *         name: limit
  *         schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
@@ -61,33 +74,60 @@ const eventListQuerySchema = paginationSchema.merge(
  *       - in: query
  *         name: cursor
  *         schema: { type: string }
- *         description: Event id to resume after (cursor pagination, preferred for deep pages). Takes precedence over `page` when set.
+ *         description: Legacy event-id cursor, or the opaque nextCursor value when `pagination=cursor`.
+ *       - in: query
+ *         name: pagination
+ *         schema: { type: string, enum: [cursor] }
+ *         description: Select the stable opaque cursor contract. On the first page, omit `cursor`; pass the returned `nextCursor` on subsequent requests.
  *     responses:
  *       200:
- *         description: Paginated list of events (summary fields only)
+ *         description: Stable cursor requests return { data, nextCursor, hasNext }; legacy cursor and offset requests retain their existing response shape.
  *         content:
  *           application/json:
  *             schema:
  *               type: object
- *               properties:
- *                 data:
- *                   type: array
- *                   items:
- *                     type: object
- *                     description: Event summary (subset of the full Event record)
- *                     properties:
- *                       id: { type: string }
- *                       transactionHash: { type: string }
- *                       contractAddress: { type: string }
- *                       eventType: { type: string, description: 'transfer | swap | mint | burn | custom' }
- *                       topicSymbol: { type: string, nullable: true }
- *                       decoded: { type: object, nullable: true, description: 'Human-readable decoded event payload' }
- *                       ledgerSequence: { type: integer }
- *                       ledgerCloseTime: { type: string, format: date-time }
- *                 total: { type: integer, description: 'Total number of events matching the filter' }
- *                 page: { type: integer }
- *                 limit: { type: integer }
- *                 nextCursor: { type: string, nullable: true, description: 'Pass as `cursor` to fetch the next page' }
+ *               oneOf:
+ *                 - title: StableCursorPage
+ *                   type: object
+ *                   required: [data, nextCursor, hasNext]
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         description: Event summary
+ *                         properties:
+ *                           id: { type: string }
+ *                           transactionHash: { type: string }
+ *                           contractAddress: { type: string }
+ *                           eventType: { type: string }
+ *                           topicSymbol: { type: string, nullable: true }
+ *                           decoded: { type: object, nullable: true }
+ *                           ledgerSequence: { type: integer }
+ *                           ledgerCloseTime: { type: string, format: date-time }
+ *                     nextCursor: { type: string, nullable: true, description: 'Opaque cursor; pass with pagination=cursor' }
+ *                     hasNext: { type: boolean }
+ *                 - title: LegacyPage
+ *                   type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         description: Event summary
+ *                         properties:
+ *                           id: { type: string }
+ *                           transactionHash: { type: string }
+ *                           contractAddress: { type: string }
+ *                           eventType: { type: string }
+ *                           topicSymbol: { type: string, nullable: true }
+ *                           decoded: { type: object, nullable: true }
+ *                           ledgerSequence: { type: integer }
+ *                           ledgerCloseTime: { type: string, format: date-time }
+ *                     total: { type: integer, description: 'Total number of events matching the filter' }
+ *                     page: { type: integer }
+ *                     limit: { type: integer }
+ *                     nextCursor: { type: string, nullable: true, description: 'Legacy event-id cursor' }
  *               example:
  *                 data:
  *                   - id: '3389e9f0f1a4e32477b1c0d9e8a6f5b4c3d2e1f0a9b8c7d6e5f40312233445566-AAAADwAAAAh0cmFuc2Zlcg=='
@@ -125,8 +165,26 @@ eventRouter.get(
   validateQuery(eventListQuerySchema),
   asyncHandler(async (req: Request, res: Response) => {
     const query = (req as any).validatedQuery as z.infer<typeof eventListQuerySchema>;
-    const result = await eventService.listEvents(query);
-    sendValidatedResponse(res, eventListResponseSchema, result, 'GET /events');
+    const scope = createCursorScope('events', {
+      limit: query.limit,
+      contract: query.contract,
+      type: query.type,
+      topic: query.topic,
+    });
+    let cursor: string | undefined;
+    if (query.cursor !== undefined) {
+      const decoded = decodeOpaqueCursor(query.cursor, scope);
+      if (typeof decoded !== 'string') {
+        throw new AppError(400, 'Invalid or mismatched cursor', 'INVALID_CURSOR');
+      }
+      cursor = decoded;
+    }
+
+    const result = await eventService.listEvents({ ...query, cursor });
+    res.json({
+      ...result,
+      nextCursor: result.nextCursor ? encodeOpaqueCursor(result.nextCursor, scope) : null,
+    });
   }),
 );
 
@@ -163,6 +221,7 @@ eventRouter.get(
 eventRouter.get(
   '/:id',
   validateParams(z.object({ id: z.string() })),
+  conditionalCache,
   asyncHandler(async (req: Request, res: Response) => {
     const params = (req as any).validatedParams as { id: string };
     const event = await eventService.getEventById(params.id);

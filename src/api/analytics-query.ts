@@ -229,7 +229,7 @@ analyticsQueryRouter.post(
 
 /**
  * @swagger
- * /analytics/dashboard/{type}:
+ * /analytics/query/dashboard/{type}:
  *   get:
  *     summary: Fast dashboard data from PostgreSQL materialized views (Redis-cached)
  *     description: Returns pre-computed aggregations without hitting the data lake. Cached for 5 min.
@@ -295,7 +295,7 @@ analyticsQueryRouter.get(
 
 /**
  * @swagger
- * /analytics/lineage:
+ * /analytics/query/lineage:
  *   get:
  *     summary: List recent ETL job lineage records
  *     tags: [Analytics Data Lake]

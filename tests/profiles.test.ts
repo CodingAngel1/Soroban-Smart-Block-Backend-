@@ -2,12 +2,17 @@
  * tests/profiles.test.ts
  * Issue #253 — Exhaustive Configuration Testing with Schema Validation
  */
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 
 async function loadProfiles() {
   vi.resetModules();
   return import('../src/profiles');
 }
+
+beforeEach(() => {
+  vi.stubEnv('TESTNET_DATABASE_URL', 'postgresql://testnet-db/soroban');
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe('profiles — getProfile', () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -89,6 +94,25 @@ describe('profiles — env var overrides', () => {
     const { getProfile } = await loadProfiles();
     const p = getProfile('testnet');
     expect(p.rpcUrl).toBe('https://custom-rpc.example.com');
+  });
+
+  it('parses and validates ordered Stellar RPC fallback URLs', async () => {
+    vi.stubEnv(
+      'TESTNET_RPC_FALLBACK_URLS',
+      'https://rpc-two.example.com, https://rpc-three.example.com ',
+    );
+    const { getProfile } = await loadProfiles();
+    const p = getProfile('testnet');
+    expect(p.rpcFallbackUrls).toEqual([
+      'https://rpc-two.example.com',
+      'https://rpc-three.example.com',
+    ]);
+  });
+
+  it('rejects an insecure non-devnet RPC fallback', async () => {
+    vi.stubEnv('TESTNET_RPC_FALLBACK_URLS', 'http://rpc-two.example.com');
+    const { getProfile } = await loadProfiles();
+    expect(() => getProfile('testnet')).toThrow(/only allowed on devnet/);
   });
 
   it('testnet databaseUrl falls back to DATABASE_URL', async () => {

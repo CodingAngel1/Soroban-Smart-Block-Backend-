@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { config } from './config';
 import type { RedisClientType } from 'redis';
 import { logger } from './logger';
-import { cacheBackendStatus } from './metrics';
+import { cacheBackendStatus, redisCacheOperationsTotal } from './metrics';
 import { cacheResourceFor, ttlForResource } from './cache-ttl';
 
 const CACHE_URL = config.cacheUrl ?? 'memory://';
@@ -12,6 +12,7 @@ const MAX_CACHE_SIZE = Math.max(1, parseInt(process.env.CACHE_MAX_SIZE ?? '1000'
 const DEFAULT_MEMORY_TTL_SECONDS = Math.max(1, parseInt(process.env.CACHE_MEMORY_TTL ?? '300'));
 const L1_STALE_REFRESH_FACTOR = 0.8;
 const INVALIDATION_CHANNEL = '__cache:invalidate';
+const isRedisConfigured = CACHE_URL !== '' && !CACHE_URL.startsWith('memory://');
 
 // ── Cache-key hardening (#894) ──────────────────────────────────────────────
 // Callers routinely build keys by concatenating user-controlled input
@@ -89,6 +90,15 @@ function parseSentinelUrl(url: string): {
 
 export function cacheStats(): { size: number; evictions: number } {
   return { size: memoryStore.size, evictions: _evictionCount };
+}
+
+function recordRedisCacheOperation(
+  key: string,
+  operation: 'get' | 'set' | 'delete',
+  outcome: 'hit' | 'miss' | 'success' | 'error',
+): void {
+  if (!isRedisConfigured) return;
+  redisCacheOperationsTotal.inc({ family: cacheResourceFor(key), operation, outcome });
 }
 
 function localNow(): number {
@@ -200,7 +210,7 @@ function lruGet(key: string): MemoryEntry | undefined {
 
 async function getRedisClient(): Promise<RedisClientType | null> {
   if (CACHE_URL === '' || CACHE_URL.startsWith('memory://')) return null;
-  if (redisClient) return redisClient;
+  if (redisClient) return redisAvailable ? redisClient : null;
 
   try {
     const { createClient } = await import('redis');
@@ -239,6 +249,10 @@ async function getRedisClient(): Promise<RedisClientType | null> {
         redisAvailable = false;
         cacheBackendStatus.set(0);
       });
+      client.on('ready', () => {
+        redisAvailable = true;
+        cacheBackendStatus.set(1);
+      });
 
       client.on('reconnecting', () => {
         logger.info('[cache] Redis Sentinel reconnecting', { backend: 'sentinel' });
@@ -260,6 +274,10 @@ async function getRedisClient(): Promise<RedisClientType | null> {
         logger.error('[cache] Redis client error', { backend: 'redis', error: String(err) });
         redisAvailable = false;
         cacheBackendStatus.set(0);
+      });
+      client.on('ready', () => {
+        redisAvailable = true;
+        cacheBackendStatus.set(1);
       });
       await client.connect();
       redisClient = client;
@@ -371,7 +389,7 @@ export async function cacheConnect(): Promise<void> {
   performStaleCleanup();
   cleanupInterval = setInterval(performStaleCleanup, CLEANUP_INTERVAL_MS);
 
-  const isMemoryOnly = CACHE_URL === '' || CACHE_URL.startsWith('memory://');
+  const isMemoryOnly = !isRedisConfigured;
   if (isMemoryOnly) {
     // Pure in-memory mode is intentional — metric reflects actual backend.
     cacheBackendStatus.set(0);
@@ -386,12 +404,12 @@ export async function cacheConnect(): Promise<void> {
 }
 
 export function isCacheReady(): boolean {
-  const isMemoryOnly = CACHE_URL === '' || CACHE_URL.startsWith('memory://');
+  const isMemoryOnly = !isRedisConfigured;
   return isMemoryOnly || redisAvailable;
 }
 
 export function cacheBackendType(): 'redis' | 'sentinel' | 'memory' {
-  if (CACHE_URL === '' || CACHE_URL.startsWith('memory://')) return 'memory';
+  if (!isRedisConfigured) return 'memory';
   if (!redisAvailable) return 'memory';
   if (CACHE_MODE === 'sentinel') return 'sentinel';
   return 'redis';
@@ -469,7 +487,10 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
   }
 
   const client = await getRedisClient();
-  if (!client) return null;
+  if (!client) {
+    recordRedisCacheOperation(key, 'get', isRedisConfigured ? 'error' : 'miss');
+    return null;
+  }
 
   try {
     const payload = await client.get(normalizedKey);
@@ -478,7 +499,10 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
       client as RedisClientType & { pTTL: (key: string) => Promise<number> }
     ).pTTL(normalizedKey);
 
-    if (!payload) return null;
+    if (!payload) {
+      recordRedisCacheOperation(key, 'get', 'miss');
+      return null;
+    }
 
     const versionHash = vHash ?? null;
 
@@ -495,6 +519,7 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
         expiresAt: computeMemoryExpiry(Math.max(pttl, 0)),
         versionHash,
       });
+      recordRedisCacheOperation(key, 'get', 'hit');
       return value;
     }
 
@@ -504,8 +529,10 @@ export async function cacheGet<T>(key: string): Promise<T | null> {
         : localNow() + DEFAULT_MEMORY_TTL_SECONDS * 1000;
     const value = JSON.parse(payload) as T;
     lruSet(normalizedKey, { payload, expiresAt, versionHash });
+    recordRedisCacheOperation(key, 'get', 'hit');
     return value;
   } catch (err) {
+    recordRedisCacheOperation(key, 'get', 'error');
     logger.warn('[cache] Failed to read key from Redis', {
       backend: CACHE_MODE,
       operation: 'get',
@@ -537,7 +564,10 @@ export async function cacheSet<T>(
   });
 
   const client = await getRedisClient();
-  if (!client) return;
+  if (!client) {
+    recordRedisCacheOperation(key, 'set', isRedisConfigured ? 'error' : 'success');
+    return;
+  }
 
   try {
     const multi = client.multi();
@@ -550,7 +580,9 @@ export async function cacheSet<T>(
     }
     await multi.exec();
     await publishInvalidation(normalizedKey);
+    recordRedisCacheOperation(key, 'set', 'success');
   } catch (err) {
+    recordRedisCacheOperation(key, 'set', 'error');
     logger.warn('[cache] Failed to write key to Redis', {
       backend: CACHE_MODE,
       operation: 'set',
@@ -564,12 +596,17 @@ export async function cacheDelete(key: string): Promise<void> {
   const normalizedKey = `${CACHE_SCHEMA_VERSION}:${normalizeKeyInput(key)}`;
   memoryStore.delete(normalizedKey);
   const client = await getRedisClient();
-  if (!client) return;
+  if (!client) {
+    recordRedisCacheOperation(key, 'delete', isRedisConfigured ? 'error' : 'success');
+    return;
+  }
 
   try {
     await Promise.all([client.del(normalizedKey), client.del(versionKey(normalizedKey))]);
     await publishInvalidation(normalizedKey);
+    recordRedisCacheOperation(key, 'delete', 'success');
   } catch (err) {
+    recordRedisCacheOperation(key, 'delete', 'error');
     logger.warn('[cache] Failed to delete key from Redis', {
       backend: CACHE_MODE,
       operation: 'delete',

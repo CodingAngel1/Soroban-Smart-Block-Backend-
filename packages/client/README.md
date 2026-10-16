@@ -47,8 +47,26 @@ Invalid parameters throw `RequestValidationError` before any request is sent.
 
 ## Pagination
 
+`paginate` yields each item from cursor-based responses (`nextCursor` or
+`cursor`) and page-based responses (`page` with `pages` or `total`), including
+those that nest the metadata under `pagination`. It validates the response
+shape, rejects repeated cursors, and throws if the default or configured
+`maxPages` cap is reached before the API reports completion.
+
 ```ts
 for await (const tx of client.paginate('getTransactions', { query: { limit: 100 } })) {
+  console.log(tx);
+}
+```
+
+To bound a large traversal, supply a positive page cap:
+
+```ts
+for await (const tx of client.paginate(
+  'getTransactions',
+  { query: { limit: 100 } },
+  { maxPages: 10 },
+)) {
   console.log(tx);
 }
 ```

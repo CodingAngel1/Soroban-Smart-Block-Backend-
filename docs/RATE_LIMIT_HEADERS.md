@@ -1,41 +1,55 @@
 # Rate Limit Headers
 
-The API includes standard rate limit headers on all responses (including successful requests and 429 rate limit errors). These headers follow the [RFC 6585](https://tools.ietf.org/html/rfc6585) convention and enable clients to implement intelligent backoff strategies.
+Rate limits are enforced per access tier, and the effective values are returned
+as response headers on responses handled by the rate-limit middleware. The
+policy depends on whether the Redis token bucket is active and may be further
+reduced for expensive endpoints or changed by an enterprise override. Use the
+response headers as the source of truth for an individual request.
 
 ## Standard Headers
 
 ### X-RateLimit-Limit
-Maximum number of requests allowed in the current window.
+
+Effective request limit for this endpoint and rate-limit window.
 
 ```
 X-RateLimit-Limit: 100
 ```
 
 ### X-RateLimit-Remaining
-Number of requests remaining in the current window. Decrements with each request and resets when the window expires.
+
+Requests currently remaining in the active window or token bucket.
 
 ```
 X-RateLimit-Remaining: 87
 ```
 
 ### X-RateLimit-Reset
-Unix timestamp (in seconds) when the current rate limit window expires. Use this to calculate exactly when to retry.
+
+Unix timestamp in seconds when the current window or bucket is expected to
+reset.
 
 ```
 X-RateLimit-Reset: 1722282947
 ```
 
 ### X-RateLimit-Tier
+
 The API tier applied to this request. Indicates which rate limit configuration was used.
 
 ```
 X-RateLimit-Tier: free
 ```
 
-Valid tiers: `free`, `developer`, `premium`, `enterprise`
+The legacy in-memory limiter reports `free`, `developer`, `premium`, or
+`enterprise`. The Redis token-bucket limiter reports `free`, `developer`,
+`pro` (the premium access tier), or `enterprise`. Enterprise custom policies
+report `enterprise-custom`.
 
 ### Retry-After (429 only)
-Number of seconds to wait before retrying (only included in 429 responses). Clients should use this value or calculate from `X-RateLimit-Reset`.
+
+Seconds to wait before retrying. On a 429 response, prefer this value over
+calculating a delay from `X-RateLimit-Reset`.
 
 ```
 Retry-After: 60
@@ -44,7 +58,9 @@ Retry-After: 60
 ## Optional Headers
 
 ### X-RateLimit-Policy
-Indicates a special policy applied to this request. Currently included when a user-specific rate limit override is in effect.
+
+Present when a custom policy applies, such as `user-override` or an
+enterprise-custom policy label.
 
 ```
 X-RateLimit-Policy: user-override
@@ -59,7 +75,7 @@ import axios from 'axios';
 
 const client = axios.create({
   baseURL: 'https://api.example.com',
-  headers: { 'X-API-Key': 'your-api-key' }
+  headers: { 'X-API-Key': 'your-api-key' },
 });
 
 client.interceptors.response.use(
@@ -67,17 +83,17 @@ client.interceptors.response.use(
   async (error) => {
     if (error.response?.status === 429) {
       const retryAfter = parseInt(
-        error.response.headers['retry-after'] || 
-        (Math.ceil(error.response.headers['x-ratelimit-reset'] - Date.now() / 1000))
+        error.response.headers['retry-after'] ||
+          Math.ceil(error.response.headers['x-ratelimit-reset'] - Date.now() / 1000),
       );
-      
+
       console.log(`Rate limited. Retrying after ${retryAfter} seconds...`);
-      await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
-      
+      await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+
       return client.request(error.config);
     }
     return Promise.reject(error);
-  }
+  },
 );
 
 // Make requests with backoff support
@@ -95,7 +111,7 @@ class RateLimitedSession(requests.Session):
     def request(self, *args, **kwargs):
         while True:
             response = super().request(*args, **kwargs)
-            
+
             if response.status_code == 429:
                 retry_after = int(
                     response.headers.get('Retry-After') or
@@ -104,12 +120,12 @@ class RateLimitedSession(requests.Session):
                 print(f"Rate limited. Retrying after {retry_after} seconds...")
                 time.sleep(retry_after)
                 continue
-            
+
             # Log remaining requests
             remaining = response.headers.get('X-RateLimit-Remaining')
             if remaining:
                 print(f"Requests remaining: {remaining}")
-            
+
             return response
 
 session = RateLimitedSession()
@@ -127,20 +143,48 @@ curl -i -H 'X-API-Key: your-api-key' \
   https://api.example.com/api/v1/transactions
 
 # Response will include:
-# X-RateLimit-Limit: 250
+# X-RateLimit-Limit: 300
 # X-RateLimit-Remaining: 234
 # X-RateLimit-Reset: 1722282947
 # X-RateLimit-Tier: developer
 ```
 
-## Rate Limit Tiers
+## Default policies
 
-| Tier | Requests per Minute | Use Case |
-|------|-------------------|----------|
-| free | 100 | Public/unauthenticated requests |
-| developer | 250 | Development with an API key |
-| premium | 1000 | Production applications |
-| enterprise | custom | Custom SLA agreements |
+The service has two limiter configurations. A connected Redis store activates
+the token-bucket policies; otherwise the in-memory limiter uses the configurable
+legacy defaults.
+
+| Access tier                   | Legacy default per minute | Redis token-bucket refill per minute | Redis burst capacity |
+| ----------------------------- | ------------------------: | -----------------------------------: | -------------------: |
+| Public / free                 |                       100 |                                1,000 |                   50 |
+| Developer                     |                       300 |                                1,000 |                   50 |
+| Premium (`pro` in Redis mode) |                     1,000 |                               10,000 |                  200 |
+| Enterprise                    |                     1,000 |                               60,000 |                  500 |
+
+Legacy defaults can be changed with `RATE_LIMIT_PUBLIC_MAX`,
+`RATE_LIMIT_DEVELOPER_MAX`, and `RATE_LIMIT_PREMIUM_MAX`, and their matching
+`*_WINDOW_MS` variables (defaults are 60,000 ms). The legacy enterprise
+limiter uses the premium window and maximum. Redis token-bucket values are
+defined in `src/middleware/tokenBucket.ts`; enterprise custom limits may
+override the standard tier policy.
+
+In Redis mode, route groups further scale the effective per-minute limit:
+search uses 50%, contract-creation POST requests 17%, simulation requests 8%,
+and WebSocket requests 5%. Event routes use the tier's full rate. The
+`X-RateLimit-Limit` header reports the effective limit after this scaling.
+An enterprise per-organisation policy or configured user override takes
+precedence where its middleware is active.
+
+Rate-limit counters are local to a backend deployment: separate network
+deployments (for example, testnet and mainnet) have independent counters when
+they use separate Redis stores or in-memory processes. The limit policy itself
+does not select a Stellar network; network selection remains a deployment
+configuration.
+
+For browser clients, the API exposes `X-Request-Id`, the `X-RateLimit-*`
+headers, and `Retry-After` through CORS. Production deployments must still
+allow the browser application's origin with `CORS_ALLOWED_ORIGINS`.
 
 ## Best Practices
 
@@ -156,18 +200,18 @@ curl -i -H 'X-API-Key: your-api-key' \
 async function makeRequestWithBackoff(
   client: AxiosInstance,
   endpoint: string,
-  minRemaining: number = 10
+  minRemaining: number = 10,
 ) {
   const response = await client.get(endpoint);
   const remaining = parseInt(response.headers['x-ratelimit-remaining']);
   const resetAt = parseInt(response.headers['x-ratelimit-reset']);
-  
+
   if (remaining < minRemaining) {
     const waitSeconds = resetAt - Math.floor(Date.now() / 1000);
     console.log(`Low requests remaining (${remaining}). Waiting ${waitSeconds}s until reset.`);
-    await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+    await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
   }
-  
+
   return response;
 }
 ```

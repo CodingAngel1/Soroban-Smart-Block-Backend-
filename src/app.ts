@@ -17,6 +17,7 @@ import { config } from './config';
 import { router } from './api/router';
 import { billingRouter } from './services/stripe-billing';
 import { correlationMiddleware } from './middleware/correlation';
+import { CORS_ALLOWED_HEADERS, CORS_EXPOSED_HEADERS } from './middleware/corsHeaders';
 import { versioningMiddleware } from './middleware/versioning';
 import { tieredRateLimit } from './middleware/rateLimit';
 import { metricsMiddleware } from './middleware/metricsMiddleware';
@@ -37,17 +38,22 @@ import yogaHandler from './graphql';
 import { createTryItRouter, tryItAttribution } from './api/tryit/router';
 import { featureFlags } from './feature-flags';
 import { errorHandler } from './middleware/errorHandler';
+import { publicErrorCodeMiddleware } from './middleware/publicErrorCodes';
 import { requestContext } from './middleware/requestContext';
 import { apiKeyAuth } from './middleware/apiKeyAuth';
 import { metricsAuth, metricsRateLimiter } from './middleware/metricsAuth';
 import { auditLogMiddleware } from './middleware/auditLog';
 import { asyncHandler } from './middleware/asyncHandler';
 import { rejectUntrustedForwardedHeaders } from './middleware/proxyTrust';
+import { createMaintenanceModeMiddleware } from './middleware/maintenanceMode';
 import { getHealthStatus, getLivenessStatus, getReadinessStatus } from './health';
+import { createDependencyHealthHandler } from './health-routes';
 import { getP2pStatusSnapshot, resolveLedgerLocation } from './p2p';
 import { getIndexerStatus } from './indexer-state';
 import { statusRouter } from './api/status';
 import { logger } from './logger';
+import { getPrismaPoolMetrics } from './db/prisma-pool-metrics';
+import { collectPostgresPoolMetrics } from './db/postgres-pool-metrics';
 
 export interface AppOptions {
   /** Returns true once graceful shutdown has begun (probes respond 503). */
@@ -62,6 +68,7 @@ export function createApp(options: AppOptions): express.Express {
   const { isShuttingDown, serviceStartTime, disabledServices } = options;
 
   const app = express();
+  configureApiJsonSerialization(app);
   app.set('trust proxy', config.trustProxy);
   app.use(rejectUntrustedForwardedHeaders);
 
@@ -189,7 +196,8 @@ export function createApp(options: AppOptions): express.Express {
     cors({
       origin: corsOrigin,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Api-Key', 'X-Request-Id'],
+      allowedHeaders: CORS_ALLOWED_HEADERS,
+      exposedHeaders: CORS_EXPOSED_HEADERS,
       credentials: corsCredentials,
     }),
   );
@@ -204,7 +212,9 @@ export function createApp(options: AppOptions): express.Express {
   // Request size guard before body parsing (Issue #274)
   app.use(requestSizeGuard(1_048_576)); // 1 MB
 
+  app.use(publicErrorCodeMiddleware);
   app.use(express.json({ limit: '1mb' }));
+  app.use(createMaintenanceModeMiddleware(config.apiMaintenanceMode, config.stellarNetwork));
   app.use(networkRouter);
 
   // Request context FIRST (generates requestId + start time for correlation)
@@ -244,6 +254,21 @@ export function createApp(options: AppOptions): express.Express {
     }),
   );
 
+  app.use(requestTimeout());
+  app.use('/api/v1/batch', responseSizeBudget(BATCH_RESPONSE_MAX_BYTES));
+  app.use(
+    [
+      '/api/v1/analytics',
+      '/api/v1/dex-analytics',
+      '/api/v1/portfolio',
+      '/api/v1/simulate',
+      '/api/v1/verify',
+      '/api/v1/compiler',
+      '/api/v1/query',
+    ],
+    responseSizeBudget(EXPENSIVE_RESPONSE_MAX_BYTES),
+  );
+
   app.use('/api/graphql', yogaHandler as unknown as express.RequestHandler);
 
   app.use('/api/v1', versioningMiddleware, router);
@@ -258,8 +283,13 @@ export function createApp(options: AppOptions): express.Express {
     metricsRateLimiter,
     metricsAuth,
     asyncHandler(async (_req, res) => {
+      collectPostgresPoolMetrics();
       res.set('Content-Type', registry.contentType);
-      res.end(await registry.metrics());
+      const [applicationMetrics, prismaPoolMetrics] = await Promise.all([
+        registry.metrics(),
+        getPrismaPoolMetrics(),
+      ]);
+      res.end(`${applicationMetrics}${prismaPoolMetrics}`);
     }),
   );
 
@@ -285,27 +315,11 @@ export function createApp(options: AppOptions): express.Express {
     }),
   );
 
-  // Detailed health check (Issue #923) with live probes
-  app.get(
-    '/health/detailed',
-    asyncHandler(async (_req, res) => {
-      if (isShuttingDown()) {
-        return res
-          .status(503)
-          .json({ status: 'shutting_down', timestamp: new Date().toISOString() });
-      }
-
-      const healthStatus = await getHealthStatus(true);
-
-      // Return 503 if any dependency is unhealthy, 200 otherwise
-      const statusCode = healthStatus.status === 'unhealthy' ? 503 : 200;
-
-      res.status(statusCode).json({
-        ...healthStatus,
-        network: config.stellarNetwork,
-      });
-    }),
-  );
+  // Live dependency health is separate from process liveness and traffic
+  // readiness. Keep /health/detailed as a compatibility alias.
+  const dependencyHealthHandler = createDependencyHealthHandler(isShuttingDown);
+  app.get('/health/detailed', dependencyHealthHandler);
+  app.get('/health/dependencies', dependencyHealthHandler);
 
   // Public Status Page & Uptime History API (Issue #1031)
   app.use('/status', statusRouter);

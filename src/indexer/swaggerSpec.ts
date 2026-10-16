@@ -2,6 +2,45 @@ import swaggerJsdoc from 'swagger-jsdoc';
 import path from 'path';
 import fs from 'fs';
 
+function mountedApiDocFiles(): string[] {
+  const apiDirectory = path.resolve(__dirname, '../api');
+  const root = ['router.ts', 'router.js']
+    .map((file) => path.join(apiDirectory, file))
+    .find((file) => fs.existsSync(file));
+  if (!root) return [];
+
+  const queue = [root];
+  const visited = new Set<string>();
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (visited.has(file)) continue;
+    visited.add(file);
+
+    const content = fs.readFileSync(file, 'utf8');
+    const importPattern = /(?:from\s*|require\s*\()\s*['"](\.[^'"]+)['"]/g;
+    let match: RegExpExecArray | null;
+    while ((match = importPattern.exec(content)) !== null) {
+      const base = path.resolve(path.dirname(file), match[1]);
+      const candidates = [
+        base,
+        `${base}.ts`,
+        `${base}.js`,
+        path.join(base, 'index.ts'),
+        path.join(base, 'index.js'),
+      ];
+      const dependency = candidates.find(
+        (candidate) =>
+          candidate.startsWith(`${apiDirectory}${path.sep}`) &&
+          fs.existsSync(candidate) &&
+          fs.statSync(candidate).isFile(),
+      );
+      if (dependency && !visited.has(dependency)) queue.push(dependency);
+    }
+  }
+
+  return [...visited].filter((file) => /\.(?:ts|js)$/.test(file));
+}
+
 const options: swaggerJsdoc.Options = {
   definition: {
     openapi: '3.0.0',
@@ -50,7 +89,7 @@ const options: swaggerJsdoc.Options = {
           in: 'header',
           name: 'X-API-Key',
           description:
-            'Optional API key. Tiers: public (100 req/min), developer (300 req/min), premium (1000 req/min).',
+            'Optional API key. Anonymous requests are limited to 60 req/min; API key tiers use configured free, developer, pro, and enterprise limits.',
         },
       },
       schemas: {
@@ -96,17 +135,132 @@ const options: swaggerJsdoc.Options = {
             createdAt: { type: 'string', format: 'date-time' },
           },
         },
-        // Shared error envelope returned by route handlers, e.g. { error: "..." }.
+        // Every HTTP error response includes a stable top-level machine code.
         Error: {
           type: 'object',
+          required: ['code'],
           properties: {
-            error: {
+            code: {
               type: 'string',
-              description: 'Human-readable error message',
+              description:
+                'Stable machine-readable error code; clients should branch on this value.',
+              example: 'VALIDATION_ERROR',
+            },
+            error: {
+              description: 'Endpoint-specific error details or human-readable message.',
               // Neutral fallback; each error response overrides this with a
               // response-level example reflecting that endpoint's real message.
               example: 'Bad request',
             },
+          },
+        },
+        ComposedTransaction: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            txHash: { type: 'string' },
+            ledgerSeq: { type: 'integer' },
+            safetyScore: { type: 'number' },
+            riskLevel: { type: 'string' },
+            analysisStatus: { type: 'string' },
+            patterns: { type: 'array', items: { $ref: '#/components/schemas/CompositionPattern' } },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        ContractComposabilityProfile: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            contractAddress: { type: 'string' },
+            compositionCount: { type: 'integer' },
+            uniqueCallers: { type: 'integer' },
+            uniqueCallees: { type: 'integer' },
+            safetyScoreAvg: { type: 'number' },
+            riskIncidents: { type: 'integer' },
+            lastAnalyzed: { type: 'string', format: 'date-time' },
+          },
+        },
+        CompositionPattern: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            category: { type: 'string' },
+            riskRating: { type: 'string' },
+            mitigationGuide: { type: 'string', nullable: true },
+            instances: { type: 'array', items: { type: 'object' } },
+            createdAt: { type: 'string', format: 'date-time' },
+            updatedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        ComposabilityStaticAnalysis: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            contractAddress: { type: 'string' },
+            hasUnboundedRecursion: { type: 'boolean' },
+            maxCallDepth: { type: 'integer' },
+            analysisVersion: { type: 'string' },
+            analyzedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        ComposabilityVerification: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            txHash: { type: 'string' },
+            atomicity: { type: 'boolean' },
+            reentrancyFree: { type: 'boolean' },
+            totalScore: { type: 'number' },
+            verified: { type: 'boolean' },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        CompositionAlert: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            contractAddress: { type: 'string' },
+            patternId: { type: 'string' },
+            severity: { type: 'string' },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        ComposabilityFuzzCampaign: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            contractAddress: { type: 'string' },
+            status: { type: 'string' },
+            totalCases: { type: 'integer' },
+            unsafeFound: { type: 'integer' },
+            coveragePct: { type: 'number' },
+            findings: { type: 'array', items: { type: 'object' } },
+            completedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        ComposabilityExploit: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            title: { type: 'string' },
+            patternCategory: { type: 'string' },
+            severity: { type: 'string' },
+            discoveredAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        EcosystemComposabilityIndex: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            score: { type: 'number' },
+            compositionDiversity: { type: 'integer' },
+            avgSafetyScore: { type: 'number' },
+            exploitIncidentRate: { type: 'number' },
+            protocolInterconnectivity: { type: 'number' },
+            totalContracts: { type: 'integer' },
+            totalComposedTx: { type: 'integer' },
+            computedAt: { type: 'string', format: 'date-time' },
           },
         },
         // Core entity: a decoded Soroban contract event (full record).
@@ -780,7 +934,11 @@ const options: swaggerJsdoc.Options = {
                   code: { type: 'string', example: 'invalid_type' },
                   expected: { type: 'string', example: 'string' },
                   received: { type: 'string', example: 'undefined' },
-                  path: { type: 'array', items: { type: 'string' }, example: ['txHash'] },
+                  path: {
+                    type: 'array',
+                    items: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
+                    example: ['txHash'],
+                  },
                   message: { type: 'string', example: 'Required' },
                 },
               },
@@ -2288,7 +2446,7 @@ const options: swaggerJsdoc.Options = {
             outcome: {
               type: 'string',
               nullable: true,
-              enum: ['upheld', 'rejected', 'timeout'],
+              enum: ['upheld', 'rejected', 'timeout', null],
               example: null,
             },
             resolvedAt: { type: 'string', format: 'date-time', nullable: true, example: null },
@@ -2372,10 +2530,9 @@ const options: swaggerJsdoc.Options = {
     },
     security: [{ ApiKeyAuth: [] }],
   },
-  // Scan all route files for @swagger JSDoc comments
+  // Scan only the API router's dependency graph, excluding orphaned routers.
   apis: [
-    path.join(__dirname, '../api/*.ts'),
-    path.join(__dirname, '../api/*.js'),
+    ...mountedApiDocFiles(),
     path.join(__dirname, '../middleware/*.ts'),
     path.join(__dirname, '../middleware/*.js'),
   ],

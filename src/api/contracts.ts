@@ -9,6 +9,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { config } from '../config';
 import { getProtocolDeployments } from '../indexer/registry';
 import { adminAuth } from '../middleware/adminAuth';
+import { conditionalCache } from '../middleware/conditionalCache';
 
 /**
  * @swagger
@@ -179,7 +180,7 @@ contractRouter.get(
 
 /**
  * @swagger
- * /api/v1/contracts/protocol/{protocolKey}:
+ * /contracts/protocol/{protocolKey}:
  *   get:
  *     summary: List every network deployment grouped under one protocol key
  *     tags: [Contracts]
@@ -342,6 +343,7 @@ contractRouter.get(
 contractRouter.get(
   '/:address',
   validateAddressParam('address'),
+  conditionalCache,
   asyncHandler(async (req: Request, res: Response) => {
     const contract = await prismaRead.contract.findUnique({
       where: { address: req.params.address },

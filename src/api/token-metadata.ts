@@ -5,7 +5,7 @@
  *
  * Routes:
  *   GET  /token-metadata/:address
- *       Returns { symbol, name, decimals, source } for a Soroban token.
+ *       Returns { symbol, name, decimals, source, observedAt } for a Soroban token.
  *
  *   GET  /token-metadata/:address/format?amount=<integer>
  *       Formats a raw on-chain integer using the token's decimal config.
@@ -58,6 +58,7 @@ export const tokenMetadataRouter = Router();
  *                 name:     { type: string, nullable: true }
  *                 decimals: { type: integer }
  *                 source:   { type: string, enum: [db, sac, rpc, classic] }
+ *                 observedAt: { type: string, format: date-time }
  *       404:
  *         description: Token metadata could not be resolved
  */

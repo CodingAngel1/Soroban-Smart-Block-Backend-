@@ -36,6 +36,7 @@ describe('Batch Endpoints', () => {
       expect(res.body).toEqual({
         data: [null, null],
         missing: ['non-existent-id-1', 'non-existent-id-2'],
+        errors: [],
       });
     });
 
@@ -79,6 +80,7 @@ describe('Batch Endpoints', () => {
           'aabbccdd00112233445566778899aabbccdd00112233445566778899aabbccdd',
           'eeff001122334455667788990011223344556677889900112233445566778899',
         ],
+        errors: [],
       });
     });
 
@@ -207,6 +209,7 @@ describe('Batch Endpoints', () => {
       expect(res.body).toMatchObject({
         data: expect.any(Array),
         missing: expect.any(Array),
+        errors: expect.any(Array),
       });
       expect(res.body.data).toHaveLength(2);
     });
@@ -219,6 +222,7 @@ describe('Batch Endpoints', () => {
       expect(res.body).toMatchObject({
         data: expect.any(Array),
         missing: expect.any(Array),
+        errors: expect.any(Array),
       });
       expect(res.body.data).toHaveLength(2);
     });
@@ -231,6 +235,7 @@ describe('Batch Endpoints', () => {
       expect(res.body).toMatchObject({
         data: expect.any(Array),
         inactive: expect.any(Array),
+        errors: expect.any(Array),
       });
     });
   });

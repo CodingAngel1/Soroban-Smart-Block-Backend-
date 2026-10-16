@@ -1,4 +1,5 @@
 import { prismaRead as prisma } from '../db';
+import { config } from '../config';
 
 // =============================================================================
 // Issue #1119 — Bound Prisma findMany queries that omit a take limit
@@ -116,14 +117,15 @@ export interface LedgerSummary {
 export class LedgerRepository {
   async findRecentLedgers(limit: number) {
     return prisma.ledger.findMany({
+      where: { network: config.stellarNetwork },
       orderBy: { sequence: 'desc' },
       take: limit,
     });
   }
 
-  async findBySequence(sequence: number) {
+  async findBySequence(sequence: number, network = config.stellarNetwork) {
     return prisma.ledger.findUnique({
-      where: { sequence },
+      where: { network_sequence: { network, sequence } },
     });
   }
 }
