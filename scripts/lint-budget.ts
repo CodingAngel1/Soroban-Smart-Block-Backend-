@@ -15,13 +15,11 @@
  *      pre-existing backlog is paid down incrementally rather than in one PR.
  *   2. It records and prints a warning-count *trend* so a PR that burns down
  *      warnings (or lets them climb back) is visible in the CI log.
- *   3. The noisiest rules — `@typescript-eslint/no-explicit-any` and
- *      `error-handling/no-phantom-prisma-field` — are *tracked but not
- *      blocking*: they are reported in the trend and counted toward the total,
- *      but do not trip the ratchet. This is the "split the config" suggestion
- *      from #920: keep the real error rules strict and let the noisy ones be a
- *      separate, non-blocking warnings pass. Lower the budget as these are
- *      burned down.
+ *   3. Tracked non-blocking warnings and existing errors have per-file,
+ *      per-rule baselines. Any increase fails, even if a decrease elsewhere
+ *      would keep the aggregate count flat. Selected legacy source files use
+ *      warning-level exceptions for any/non-null assertions until those
+ *      exceptions are removed.
  *
  * Usage:
  *   npx ts-node scripts/lint-budget.ts                    # blocking budget 0
@@ -46,17 +44,29 @@ const LINT_TARGETS = ['src/**/*.ts', 'tests/**/*.ts'];
  */
 const NON_BLOCKING_RULES = new Set([
   '@typescript-eslint/no-explicit-any',
+  '@typescript-eslint/no-non-null-assertion',
   'error-handling/no-phantom-prisma-field',
 ]);
+const BASELINE_PATH = path.join(__dirname, 'lint-debt-baseline.json');
+
+type RuleCounts = Record<string, Record<string, number>>;
 
 interface LintResult {
   totalWarnings: number;
   blockingWarnings: number;
   errors: number;
+  warningsByFile: RuleCounts;
+  errorsByFile: RuleCounts;
   output: string;
+  failed: boolean;
 }
 
-/** Runs eslint and counts warnings. Errors still fail the build outright. */
+interface LintDebtBaseline {
+  warnings: RuleCounts;
+  errors: RuleCounts;
+}
+
+/** Runs eslint and counts warnings and errors by file and rule. */
 function runLint(): LintResult {
   const result = spawnSync('npx', ['eslint', ...LINT_TARGETS, '--format', 'json'], {
     encoding: 'utf-8',
@@ -75,14 +85,30 @@ function runLint(): LintResult {
     // JSON-lines below if we can parse it, otherwise bail with the raw text.
     const parsed = safeParseJson(stdout);
     if (parsed === null) {
-      return { totalWarnings: -1, blockingWarnings: -1, errors: 1, output: stderr + stdout };
+      return {
+        totalWarnings: -1,
+        blockingWarnings: -1,
+        errors: 1,
+        warningsByFile: {},
+        errorsByFile: {},
+        output: stderr + stdout,
+        failed: true,
+      };
     }
     return countFromJson(parsed, stderr + stdout, true);
   }
 
   const parsed = safeParseJson(stdout);
   if (parsed === null) {
-    return { totalWarnings: -1, blockingWarnings: -1, errors: 1, output: stderr + stdout };
+    return {
+      totalWarnings: -1,
+      blockingWarnings: -1,
+      errors: 1,
+      warningsByFile: {},
+      errorsByFile: {},
+      output: stderr + stdout,
+      failed: true,
+    };
   }
   return countFromJson(parsed, stderr + stdout, false);
 }
@@ -97,24 +123,78 @@ function safeParseJson(raw: string): unknown {
 
 function countFromJson(data: unknown, output: string, forcedError: boolean): LintResult {
   const files = Array.isArray(data)
-    ? (data as Array<{ messages?: Array<Record<string, unknown>> }>)
+    ? (data as Array<{ filePath?: string; messages?: Array<Record<string, unknown>> }>)
     : [];
   let totalWarnings = 0;
   let blockingWarnings = 0;
   let errors = 0;
+  const warningsByFile: RuleCounts = {};
+  const errorsByFile: RuleCounts = {};
   for (const file of files) {
+    const relativePath =
+      typeof file.filePath === 'string'
+        ? path.relative(path.join(__dirname, '..'), file.filePath).split(path.sep).join('/')
+        : '<unknown>';
     for (const msg of file.messages ?? []) {
       const severity = msg.severity as number | undefined;
       const ruleId = typeof msg.ruleId === 'string' ? (msg.ruleId as string) : '';
-      if (severity === 2) errors += 1;
-      else if (severity === 1) {
+      if (severity === 2) {
+        errors += 1;
+        incrementRuleCount(errorsByFile, relativePath, ruleId);
+      } else if (severity === 1) {
         totalWarnings += 1;
+        incrementRuleCount(warningsByFile, relativePath, ruleId);
         if (!NON_BLOCKING_RULES.has(ruleId)) blockingWarnings += 1;
       }
     }
   }
   if (forcedError && errors === 0) errors = 1;
-  return { totalWarnings, blockingWarnings, errors, output };
+  return {
+    totalWarnings,
+    blockingWarnings,
+    errors,
+    warningsByFile,
+    errorsByFile,
+    output,
+    failed: forcedError,
+  };
+}
+
+function incrementRuleCount(counts: RuleCounts, file: string, ruleId: string): void {
+  if (!ruleId) return;
+  counts[file] ??= {};
+  counts[file][ruleId] = (counts[file][ruleId] ?? 0) + 1;
+}
+
+export function findLintDebtIncreases(
+  current: RuleCounts,
+  baseline: RuleCounts,
+): Array<{ file: string; rule: string; current: number; baseline: number }> {
+  const increases: Array<{ file: string; rule: string; current: number; baseline: number }> = [];
+  for (const [file, rules] of Object.entries(current)) {
+    for (const [rule, count] of Object.entries(rules)) {
+      const allowed = baseline[file]?.[rule] ?? 0;
+      if (count > allowed) increases.push({ file, rule, current: count, baseline: allowed });
+    }
+  }
+  return increases.sort((a, b) => a.file.localeCompare(b.file) || a.rule.localeCompare(b.rule));
+}
+
+function readDebtBaseline(): LintDebtBaseline {
+  const raw: unknown = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf-8'));
+  if (
+    raw === null ||
+    typeof raw !== 'object' ||
+    !('warnings' in raw) ||
+    !('errors' in raw) ||
+    typeof raw.warnings !== 'object' ||
+    raw.warnings === null ||
+    typeof raw.errors !== 'object' ||
+    raw.errors === null
+  ) {
+    throw new Error(`Invalid lint debt baseline at ${BASELINE_PATH}`);
+  }
+  return raw as LintDebtBaseline;
 }
 
 function parseMaxWarnings(argv: string[]): number {
@@ -125,6 +205,20 @@ function parseMaxWarnings(argv: string[]): number {
   if (Number.isNaN(parsed) || parsed < 0) {
     console.error(
       `Invalid --max-warnings value: "${String(raw)}" (expected a non-negative integer)`,
+    );
+    process.exit(2);
+  }
+  return parsed;
+}
+
+function parseMaxNonBlocking(argv: string[]): number {
+  const budgetIndex = argv.indexOf('--max-non-blocking');
+  if (budgetIndex === -1) return 0;
+  const raw = argv[budgetIndex + 1];
+  const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
+  if (Number.isNaN(parsed) || parsed < 0) {
+    console.error(
+      `Invalid --max-non-blocking value: "${String(raw)}" (expected a non-negative integer)`,
     );
     process.exit(2);
   }
@@ -155,11 +249,29 @@ function writeBaseline(count: number): void {
 
 if (require.main === module) {
   const maxWarnings = parseMaxWarnings(process.argv.slice(2));
+  const maxNonBlocking = parseMaxNonBlocking(process.argv.slice(2));
 
   console.log('Running eslint (budget ratchet, #920)...\n');
-  const { totalWarnings, blockingWarnings, errors, output } = runLint();
+  const {
+    totalWarnings,
+    blockingWarnings,
+    errors,
+    warningsByFile,
+    errorsByFile,
+    output,
+    failed,
+  } = runLint();
+  let baseline: LintDebtBaseline;
+  try {
+    baseline = readDebtBaseline();
+  } catch (error) {
+    console.error(`❌ LINT FAILED — ${String(error)}\n`);
+    process.exit(1);
+  }
 
-  if (errors > 0) {
+  const warningIncreases = findLintDebtIncreases(warningsByFile, baseline.warnings);
+  const errorIncreases = findLintDebtIncreases(errorsByFile, baseline.errors);
+  if (failed || (errors > 0 && errorIncreases.length > 0)) {
     console.log(output);
   }
 
@@ -178,17 +290,36 @@ if (require.main === module) {
   console.log(`Total warnings:     ${totalWarnings}`);
   console.log(`Blocking warnings:  ${blockingWarnings}${arrow}`);
   console.log(
-    `Non-blocking debt:  ${totalWarnings - blockingWarnings} (no-explicit-any + no-phantom-prisma-field)`,
+    `Non-blocking debt:  ${totalWarnings - blockingWarnings} (tracked per file and rule)`,
   );
   console.log(`Budget:             ${maxWarnings}`);
+  console.log(`Non-blocking cap:   ${maxNonBlocking}`);
+  console.log(`Errors:             ${errors}`);
   if (previous !== null) {
     console.log(`Previous blocking:  ${previous}`);
   }
   console.log('───────────────────────────────────────────────────');
 
-  if (errors > 0) {
+  if (failed || warningIncreases.length > 0 || errorIncreases.length > 0) {
+    for (const item of [...warningIncreases, ...errorIncreases]) {
+      console.error(
+        `  ${item.file} [${item.rule}]: ${item.current} (baseline ${item.baseline})`,
+      );
+    }
+  }
+
+  if (warningIncreases.length > 0 || errorIncreases.length > 0) {
     console.log(
-      `❌ LINT FAILED — ${errors} error(s). See output above and fix them before merging.\n`,
+      `❌ LINT FAILED — ${warningIncreases.length} warning debt and ${errorIncreases.length} error ` +
+        `count(s) increased from their per-file baselines${failed ? ' or ESLint failed to run' : ''}.\n`,
+    );
+    process.exit(1);
+  }
+
+  if (totalWarnings - blockingWarnings > maxNonBlocking) {
+    console.log(
+      `❌ LINT FAILED — ${totalWarnings - blockingWarnings} non-blocking warning(s) exceed ` +
+        `budget of ${maxNonBlocking}.\n`,
     );
     process.exit(1);
   }
@@ -215,4 +346,4 @@ if (require.main === module) {
   process.exit(0);
 }
 
-export { runLint };
+export { countFromJson, runLint };
