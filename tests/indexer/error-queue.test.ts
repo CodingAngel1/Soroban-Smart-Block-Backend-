@@ -31,6 +31,10 @@ vi.mock('../../src/db', () => {
   };
 });
 
+vi.mock('../../src/config', () => ({
+  config: { stellarNetwork: 'testnet' },
+}));
+
 import { enqueueFailure, retryFailures } from '../../src/indexer/errorQueue';
 import { prismaWrite } from '../../src/db';
 
@@ -124,6 +128,11 @@ describe('retryFailures', () => {
     const handler = vi.fn().mockResolvedValue(undefined);
     await retryFailures(handler);
 
+    expect(db.findMany).toHaveBeenCalledWith({
+      where: { dead: false },
+      take: 50,
+      orderBy: { createdAt: 'asc' },
+    });
     expect(handler).toHaveBeenCalledOnce();
     expect(db.delete).toHaveBeenCalledWith({ where: { id: 10 } });
   });

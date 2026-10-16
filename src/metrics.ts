@@ -43,6 +43,7 @@ export const gasFeeAlertApiOperations = new Counter({
   labelNames: ['operation', 'outcome'],
   registers: [registry],
 });
+const gasFeeAlertMeter = otelMetrics.getMeter('soroban-gas-fee-alerts');
 export const gasFeeAlertApiOperationsOtel = gasFeeAlertMeter.createCounter(
   'gas.fee_alert.api.operations',
 );
@@ -168,14 +169,21 @@ export const http5xxSurge = new Gauge({
 export const indexerLastLedger = new Gauge({
   name: 'indexer_last_ledger',
   help: 'Last ledger sequence number processed by the indexer',
+  labelNames: ['network'],
   registers: [registry],
 });
 
 export const indexerIngestionLag = new Gauge({
   name: 'indexer_ingestion_lag_ledgers',
   help: 'Number of ledgers behind the chain tip',
+  labelNames: ['network'],
   registers: [registry],
 });
+
+export function setIndexerProgress(network: string, lastLedger: number, chainTip: number): void {
+  indexerLastLedger.set({ network }, lastLedger);
+  indexerIngestionLag.set({ network }, Math.max(0, chainTip - lastLedger));
+}
 
 export const indexerLedgersProcessed = new Counter({
   name: 'indexer_ledgers_processed_total',
@@ -208,7 +216,7 @@ export const indexerPipelineStageDuration = new Histogram({
 export const indexerPipelineStageLag = new Gauge({
   name: 'indexer_pipeline_stage_lag_ledgers',
   help: 'Ledger distance lag for each indexer pipeline stage',
-  labelNames: ['stage'],
+  labelNames: ['network', 'stage'],
   registers: [registry],
 });
 
@@ -326,21 +334,21 @@ export const cronJobLastSuccessTimestamp = new Gauge({
 export const indexerErrorQueueDepth = new Gauge({
   name: 'indexer_error_queue_depth',
   help: 'Number of items currently in the indexer error queue by queue type',
-  labelNames: ['queue'],
+  labelNames: ['network', 'queue'],
   registers: [registry],
 });
 
 export const indexerErrorRetriesTotal = new Counter({
   name: 'indexer_error_retries_total',
   help: 'Total number of retries performed for failed indexer items',
-  labelNames: ['type'],
+  labelNames: ['network', 'type'],
   registers: [registry],
 });
 
 export const indexerErrorDlqTotal = new Counter({
   name: 'indexer_error_dlq_total',
   help: 'Total number of items dead-lettered by reason',
-  labelNames: ['reason'],
+  labelNames: ['network', 'reason'],
   registers: [registry],
 });
 
@@ -367,11 +375,10 @@ export const healthProbeDurationSeconds = new Histogram({
 
 // OTel mirror of probe counters — feeds OTLP exporters (Grafana Cloud, etc.)
 const healthProbeMeter = otelMetrics.getMeter('soroban-health-probes');
-export const healthProbeRequestsOtel = healthProbeMeter.createCounter(
-  'health.probe.requests',
-  { description: 'Total health probe requests by endpoint and outcome' },
-);
-export const healthProbeDurationOtel = healthProbeMeter.createHistogram(
-  'health.probe.duration',
-  { unit: 's', description: 'Health probe response time in seconds' },
-);
+export const healthProbeRequestsOtel = healthProbeMeter.createCounter('health.probe.requests', {
+  description: 'Total health probe requests by endpoint and outcome',
+});
+export const healthProbeDurationOtel = healthProbeMeter.createHistogram('health.probe.duration', {
+  unit: 's',
+  description: 'Health probe response time in seconds',
+});

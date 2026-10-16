@@ -41,9 +41,9 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Indexer lagging behind chain tip on {{ $labels.instance }}"
+          summary: "Indexer lagging behind chain tip for {{ $labels.network }} on {{ $labels.instance }}"
           description: >
-            The indexer is {{ $value }} ledgers behind the chain tip (warning threshold: 50).
+            The {{ $labels.network }} indexer is {{ $value }} ledgers behind the chain tip (warning threshold: 50).
             At ~5 second block times this is {{ $value | humanizeDuration }} of lag.
             Check indexer logs and RPC connectivity.
           runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md"
@@ -55,9 +55,9 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "Critical indexer lag on {{ $labels.instance }}"
+          summary: "Critical indexer lag for {{ $labels.network }} on {{ $labels.instance }}"
           description: >
-            The indexer is {{ $value }} ledgers behind the chain tip (critical threshold: 200).
+            The {{ $labels.network }} indexer is {{ $value }} ledgers behind the chain tip (critical threshold: 200).
             This indicates the indexer may be stalled. Immediate investigation required.
           runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md"
 

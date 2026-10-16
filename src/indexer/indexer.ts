@@ -7,6 +7,7 @@ import {
   indexerPipelineStageDuration,
   indexerPipelineStageLag,
   indexerPipelineStageProcessedTotal,
+  setIndexerProgress,
 } from '../metrics';
 import {
   fetchEvents,
@@ -42,7 +43,7 @@ const WORKERS = config.indexerCatchupWorkers;
 // IndexerState helpers & High Availability (HA) Leader Election
 // ---------------------------------------------------------------------------
 
-const getActiveNetwork = (): string => process.env.STELLAR_NETWORK ?? 'mainnet';
+const getActiveNetwork = (): string => config.stellarNetwork;
 
 export async function getLastIndexedLedger(network = getActiveNetwork()): Promise<number> {
   if (isP2pEnabled()) {
@@ -248,10 +249,11 @@ export async function processLedgerRange(
   try {
     const latestTip = await getLatestLedger().catch(() => end);
     const lag = Math.max(0, latestTip - end);
-    indexerPipelineStageLag.set({ stage: 'fetch' }, lag);
-    indexerPipelineStageLag.set({ stage: 'decode' }, lag);
-    indexerPipelineStageLag.set({ stage: 'persist' }, lag);
-    indexerPipelineStageLag.set({ stage: 'enrich' }, lag);
+    const network = config.stellarNetwork;
+    indexerPipelineStageLag.set({ network, stage: 'fetch' }, lag);
+    indexerPipelineStageLag.set({ network, stage: 'decode' }, lag);
+    indexerPipelineStageLag.set({ network, stage: 'persist' }, lag);
+    indexerPipelineStageLag.set({ network, stage: 'enrich' }, lag);
   } catch (err) {
     // Non-blocking metrics gauge catch
   }
@@ -929,6 +931,7 @@ export class SorobanEventWorker {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const last = await getLastIndexedLedger();
+        setIndexerProgress(config.stellarNetwork, last, targetLedger);
         if (last >= targetLedger) return;
 
         // --- GAP DETECTION & BACKFILL ---

@@ -35,6 +35,10 @@ vi.mock('../../src/db', () => {
   };
 });
 
+vi.mock('../../src/config', () => ({
+  config: { stellarNetwork: 'testnet' },
+}));
+
 import {
   enqueueFailure,
   retryFailures,
@@ -80,7 +84,7 @@ describe('error queue metrics (#912)', () => {
     });
 
     const out = await metricText('indexer_error_retries_total');
-    expect(out).toContain('indexer_error_retries_total{type="transaction"} 1');
+    expect(out).toContain('indexer_error_retries_total{network="testnet",type="transaction"} 1');
   });
 
   it('does not count the first failure as a retry', async () => {
@@ -112,7 +116,7 @@ describe('error queue metrics (#912)', () => {
     });
 
     const out = await metricText('indexer_error_dlq_total');
-    expect(out).toContain('indexer_error_dlq_total{reason="poison"} 1');
+    expect(out).toContain('indexer_error_dlq_total{network="testnet",reason="poison"} 1');
   });
 
   it('dead-letters exhausted items with a retry_exhausted reason label', async () => {
@@ -128,7 +132,7 @@ describe('error queue metrics (#912)', () => {
     });
 
     const out = await metricText('indexer_error_dlq_total');
-    expect(out).toContain('indexer_error_dlq_total{reason="retry_exhausted"} 1');
+    expect(out).toContain('indexer_error_dlq_total{network="testnet",reason="retry_exhausted"} 1');
   });
 
   it('updates queue depth gauges from backpressure reads', async () => {
@@ -140,8 +144,10 @@ describe('error queue metrics (#912)', () => {
     expect(status.deadCount).toBe(7);
 
     const out = await metricText('indexer_error_queue_depth');
-    expect(out).toContain('indexer_error_queue_depth{queue="pending"} 42');
-    expect(out).toContain('indexer_error_queue_depth{queue="dead"} 7');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="pending"} 42');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="dead"} 7');
+    expect(db.count).toHaveBeenCalledWith({ where: { dead: false } });
+    expect(deadDb.count).toHaveBeenCalledWith();
   });
 
   it('refreshes depth gauges at the end of a retryFailures cycle', async () => {
@@ -156,8 +162,8 @@ describe('error queue metrics (#912)', () => {
     await retryFailures(handler);
 
     const out = await metricText('indexer_error_queue_depth');
-    expect(out).toContain('indexer_error_queue_depth{queue="pending"} 0');
-    expect(out).toContain('indexer_error_queue_depth{queue="dead"} 0');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="pending"} 0');
+    expect(out).toContain('indexer_error_queue_depth{network="testnet",queue="dead"} 0');
   });
 
   it('classifies failure reasons into bounded buckets via failure-parser', () => {

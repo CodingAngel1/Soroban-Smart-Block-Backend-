@@ -54,7 +54,7 @@
       }
     ]
   },
-  "description": "Soroban Smart Block Explorer — API, Indexer, Cache, and Database health overview. Issues #908 #909.",
+  "description": "Soroban Smart Block Explorer — API, per-network indexer, cache, and database health overview. Issues #908 #909.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -258,7 +258,7 @@
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "indexer_ingestion_lag_ledgers",
           "instant": true,
-          "legendFormat": "lag",
+          "legendFormat": "{{network}} lag",
           "refId": "A"
         }
       ],
@@ -306,7 +306,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "expr": "indexer_ingestion_lag_ledgers",
-          "legendFormat": "Indexer lag (ledgers behind tip)",
+          "legendFormat": "{{network}} indexer lag (ledgers behind tip)",
           "refId": "A"
         },
         {
@@ -570,6 +570,85 @@
         }
       ],
       "title": "Cache Backend Status Over Time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 },
+      "id": 104,
+      "title": "Indexer Retries & Permanent Failures",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 39 },
+      "id": 11,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(indexer_error_retries_total[5m])) by (network, type)",
+          "legendFormat": "{{network}} {{type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Indexer Retry Rate by Network",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 39 },
+      "id": 12,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(indexer_error_dlq_total[5m])) by (network, reason)",
+          "legendFormat": "{{network}} {{reason}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Permanent Failure Rate by Network",
       "type": "timeseries"
     }
   ],
