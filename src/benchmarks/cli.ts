@@ -21,7 +21,7 @@ async function main() {
   switch (command) {
     case 'compare': {
       // Load all benchmark suites and compare against baselines
-      const suites = ['event-decoding', 'api-responses', 'rpc-calls'];
+      const suites = ['event-decoding', 'indexer-throughput', 'api-responses', 'rpc-calls'];
       const allComparisons: Array<{ suite: string; comparisons: any[] }> = [];
 
       for (const suiteName of suites) {

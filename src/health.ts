@@ -10,6 +10,7 @@ import { getStalenessStatus, isFeeAggregationStale } from './indexer/fee-aggrega
 import { getGasAnalyticsStalenessStatus, isGasAnalyticsStale } from './indexer/gasAnalyticsEngine';
 import { config } from './config';
 import { scheduler, type JobHealthSnapshot } from './scheduler/cron-scheduler';
+import { dbConnectionStatus } from './metrics';
 
 /**
  * Health check status for individual dependencies
@@ -88,44 +89,55 @@ export interface ReadinessResponse {
  */
 async function checkDatabaseHealth(): Promise<DependencyHealth> {
   const startTime = Date.now();
-  try {
-    // Test read replica
-    await prismaRead.$queryRaw`SELECT 1`;
+  const [readResult, writeResult] = await Promise.allSettled([
+    prismaRead.$queryRaw`SELECT 1`,
+    prismaWrite.$queryRaw`SELECT 1`,
+  ]);
+  const readReplicaHealthy = readResult.status === 'fulfilled';
+  const writePrimaryHealthy = writeResult.status === 'fulfilled';
+  dbConnectionStatus.set(writePrimaryHealthy ? 1 : 0);
 
-    // Test write database
-    await prismaWrite.$queryRaw`SELECT 1`;
-
-    const responseTime = Date.now() - startTime;
-    const replicaLag = await measureReplicaLag().catch(() => 0);
-
-    const isDegraded = responseTime > 1000 || replicaLag > 2;
+  if (!writePrimaryHealthy || !readReplicaHealthy) {
+    const status = writePrimaryHealthy ? 'degraded' : 'unhealthy';
+    const failures = [
+      !readReplicaHealthy &&
+        `Read database connection failed: ${readResult.status === 'rejected' ? readResult.reason : ''}`,
+      !writePrimaryHealthy &&
+        `Write database connection failed: ${writeResult.status === 'rejected' ? writeResult.reason : ''}`,
+    ].filter(Boolean);
 
     return {
-      status: isDegraded ? 'degraded' : 'healthy',
-      message:
-        replicaLag > 2
-          ? `High replica lag: ${replicaLag} ledgers`
-          : responseTime > 1000
-            ? 'High database latency'
-            : 'Database responsive',
+      status,
+      message: failures.join('; '),
       details: {
-        responseTimeMs: responseTime,
-        readReplica: 'connected',
-        writePrimary: 'connected',
-        replicaLagLedgers: replicaLag,
-      },
-      lastChecked: new Date().toISOString(),
-    };
-  } catch (error: any) {
-    return {
-      status: 'unhealthy',
-      message: `Database connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      details: {
-        error: error instanceof Error ? error.message : 'Unknown error',
+        responseTimeMs: Date.now() - startTime,
+        readReplica: readReplicaHealthy ? 'connected' : 'disconnected',
+        writePrimary: writePrimaryHealthy ? 'connected' : 'disconnected',
       },
       lastChecked: new Date().toISOString(),
     };
   }
+
+  const responseTime = Date.now() - startTime;
+  const replicaLag = await measureReplicaLag().catch(() => 0);
+  const isDegraded = responseTime > 1000 || replicaLag > 2;
+
+  return {
+    status: isDegraded ? 'degraded' : 'healthy',
+    message:
+      replicaLag > 2
+        ? `High replica lag: ${replicaLag} ledgers`
+        : responseTime > 1000
+          ? 'High database latency'
+          : 'Database responsive',
+    details: {
+      responseTimeMs: responseTime,
+      readReplica: 'connected',
+      writePrimary: 'connected',
+      replicaLagLedgers: replicaLag,
+    },
+    lastChecked: new Date().toISOString(),
+  };
 }
 
 /**

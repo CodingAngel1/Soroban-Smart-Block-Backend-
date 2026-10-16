@@ -150,6 +150,10 @@ export class TransactionService {
       ...(bn254GasExemption ? { bn254GasExemption } : {}),
     };
   }
+
+  async getRawXdrByHash(hash: string): Promise<{ hash: string; rawXdr: string } | null> {
+    return this.repo.findRawXdrByHash(hash);
+  }
 }
 
 export const transactionService = new TransactionService();

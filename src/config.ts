@@ -151,6 +151,7 @@ const envSchema = z.object({
   TRUST_PROXY: z.string().optional(),
 
   STELLAR_NETWORK: z.string().default('testnet'),
+  API_MAINTENANCE_MODE: z.enum(['off', 'reads', 'writes', 'all']).default('off'),
 
   INDEXER_START_LEDGER: z.coerce.number().int().min(0).default(0),
   INDEXER_POLL_INTERVAL_MS: z.coerce.number().int().positive().min(100).default(5000),
@@ -329,6 +330,7 @@ export const config = {
 
   profile,
   stellarNetwork: profile.name,
+  apiMaintenanceMode: parsedEnv.API_MAINTENANCE_MODE,
   stellarRpcUrl: profile.rpcUrl,
   stellarRpcWsUrl: profile.rpcWsUrl,
   horizonUrl: profile.horizonUrl,

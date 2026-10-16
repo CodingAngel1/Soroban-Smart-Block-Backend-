@@ -1,6 +1,6 @@
 {
   "specVersion": "1.0.0",
-  "operationCount": 494,
+  "operationCount": 506,
   "operations": {
     "deleteAdvancedEventsSubscriptionsById": {
       "method": "DELETE",
@@ -124,6 +124,32 @@
         "path:id": {
           "type": "string",
           "required": true
+        }
+      },
+      "body": "none",
+      "deprecated": false
+    },
+    "getAdminContractAbiSubmissions": {
+      "method": "GET",
+      "path": "/admin/contract-abi-submissions",
+      "params": {
+        "query:limit": {
+          "type": "integer",
+          "required": false
+        },
+        "query:page": {
+          "type": "integer",
+          "required": false
+        },
+        "query:status": {
+          "type": "string",
+          "required": false,
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "published"
+          ]
         }
       },
       "body": "none",
@@ -519,6 +545,18 @@
       "body": "none",
       "deprecated": false
     },
+    "getComplianceTokenLabelsByTokenId": {
+      "method": "GET",
+      "path": "/compliance/token-labels/{tokenId}",
+      "params": {
+        "path:tokenId": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "body": "none",
+      "deprecated": false
+    },
     "getComposabilityCircularDependencies": {
       "method": "GET",
       "path": "/composability/circular-dependencies",
@@ -778,6 +816,25 @@
         "query:since": {
           "type": "string",
           "required": false
+        }
+      },
+      "body": "none",
+      "deprecated": false
+    },
+    "getContractsLicenses": {
+      "method": "GET",
+      "path": "/contracts/licenses",
+      "params": {},
+      "body": "none",
+      "deprecated": false
+    },
+    "getContractsLicensesByContractId": {
+      "method": "GET",
+      "path": "/contracts/licenses/{contractId}",
+      "params": {
+        "path:contractId": {
+          "type": "string",
+          "required": true
         }
       },
       "body": "none",
@@ -4392,6 +4449,42 @@
       "body": "required",
       "deprecated": false
     },
+    "postAdminContractAbiSubmissionsByIdApprove": {
+      "method": "POST",
+      "path": "/admin/contract-abi-submissions/{id}/approve",
+      "params": {
+        "path:id": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "body": "optional",
+      "deprecated": false
+    },
+    "postAdminContractAbiSubmissionsByIdPublish": {
+      "method": "POST",
+      "path": "/admin/contract-abi-submissions/{id}/publish",
+      "params": {
+        "path:id": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "body": "none",
+      "deprecated": false
+    },
+    "postAdminContractAbiSubmissionsByIdReject": {
+      "method": "POST",
+      "path": "/admin/contract-abi-submissions/{id}/reject",
+      "params": {
+        "path:id": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "body": "required",
+      "deprecated": false
+    },
     "postAdvancedEventsQuery": {
       "method": "POST",
       "path": "/advanced-events/query",
@@ -4686,6 +4779,20 @@
     "postContracts": {
       "method": "POST",
       "path": "/contracts",
+      "params": {},
+      "body": "required",
+      "deprecated": false
+    },
+    "postContractsAbiSubmissions": {
+      "method": "POST",
+      "path": "/contracts/abi-submissions",
+      "params": {},
+      "body": "required",
+      "deprecated": false
+    },
+    "postGraphQuery": {
+      "method": "POST",
+      "path": "/graph/query",
       "params": {},
       "body": "required",
       "deprecated": false
@@ -5176,6 +5283,13 @@
           "required": true
         }
       },
+      "body": "required",
+      "deprecated": false
+    },
+    "postRwaComplianceReportsSchedule": {
+      "method": "POST",
+      "path": "/rwa-compliance/reports/schedule",
+      "params": {},
       "body": "required",
       "deprecated": false
     },
@@ -5720,6 +5834,30 @@
       "path": "/webhooks/{id}/verify",
       "params": {
         "path:id": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "body": "none",
+      "deprecated": false
+    },
+    "putComplianceTokenLabelsByTokenId": {
+      "method": "PUT",
+      "path": "/compliance/token-labels/{tokenId}",
+      "params": {
+        "path:tokenId": {
+          "type": "string",
+          "required": true
+        }
+      },
+      "body": "none",
+      "deprecated": false
+    },
+    "putContractsLicensesByContractId": {
+      "method": "PUT",
+      "path": "/contracts/licenses/{contractId}",
+      "params": {
+        "path:contractId": {
           "type": "string",
           "required": true
         }

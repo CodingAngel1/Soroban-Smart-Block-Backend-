@@ -9,8 +9,18 @@ import {
   Networks,
   Operation,
   Address,
+  scValToNative,
 } from '@stellar/stellar-sdk';
-import { scValToJson, parseInvokeHostFunction } from '../../src/indexer/xdr-parser';
+import {
+  scValToJson,
+  parseInvokeHostFunction,
+  parseInvokeResult,
+} from '../../src/indexer/xdr-parser';
+import {
+  stellarSdkLegacyTransactionMetaXdr,
+  stellarSdkMetadataWithoutSorobanResultXdr,
+  stellarSdkTransactionMetaFixtures,
+} from '../fixtures/stellar-sdk-transaction-meta';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -133,5 +143,23 @@ describe('parseInvokeHostFunction', () => {
     const envelope = buildInvokeEnvelope(FAKE_CONTRACT_ID, 'get_balance', []);
     const result = parseInvokeHostFunction(envelope);
     expect(result!.auth).toEqual([]);
+  });
+});
+
+describe('parseInvokeResult — Stellar SDK TransactionMeta V3 fixtures', () => {
+  it.each(stellarSdkTransactionMetaFixtures)('matches SDK fixture: $name', (fixture) => {
+    const transactionMeta = xdr.TransactionMeta.fromXDR(fixture.xdr, 'base64');
+    expect(transactionMeta.switch()).toBe(3);
+
+    const sdkReturnValue = transactionMeta.v3().sorobanMeta()?.returnValue();
+    expect(sdkReturnValue).toBeDefined();
+    expect(scValToNative(sdkReturnValue!)).toEqual(fixture.sdkValue);
+    expect(parseInvokeResult(fixture.xdr)).toEqual(fixture.decoded);
+  });
+
+  it('returns null for malformed, legacy, and non-Soroban transaction metadata', () => {
+    expect(parseInvokeResult('not-valid-xdr')).toBeNull();
+    expect(parseInvokeResult(stellarSdkLegacyTransactionMetaXdr)).toBeNull();
+    expect(parseInvokeResult(stellarSdkMetadataWithoutSorobanResultXdr)).toBeNull();
   });
 });

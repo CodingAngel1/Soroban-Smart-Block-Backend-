@@ -1,23 +1,27 @@
 # Performance Benchmarking System
 
-This document describes the performance benchmarking infrastructure for the Soroban Smart Block Explorer backend. The system automatically detects performance regressions in critical code paths and fails CI when performance degrades beyond acceptable thresholds.
+This document describes the performance benchmarking infrastructure for the Soroban Smart Block Explorer backend. The system records performance and detects regressions in critical code paths.
 
 ## Overview
 
-The benchmarking system measures performance of three critical paths:
+The benchmarking system measures performance of four critical paths:
 
 1. **Event Decoding** (`src/indexer/decoder.ts`)
    - SEP-41 transfer event decoding
    - Complex generic event handling
    - XDR parsing overhead
-
-2. **API Responses** (`src/api/`)
+2. **Indexer Throughput** (`src/benchmarks/indexer-throughput.test.ts`)
+   - Events decoded per second for repeated 100-event batches
+   - Representative transfer, swap, nested-map, vector, byte, and numeric XDR values
+   - Stores measured events/second and batch size in each result
+   - Measures the local decode stage only; it does not include RPC or database I/O
+3. **API Responses** (`src/api/`)
    - Transaction list endpoint performance
    - Event list endpoint performance
    - Contract detail endpoint performance
    - Pagination overhead
 
-3. **RPC Calls** (`src/indexer/rpc.ts`)
+4. **RPC Calls** (`src/indexer/rpc.ts`)
    - getEvents RPC call overhead
    - getTransaction RPC call performance
    - getLedger RPC call performance
@@ -35,6 +39,7 @@ src/benchmarks/
 ├── comparison.ts      # BenchmarkStore - result storage and regression detection
 ├── cli.ts             # CLI for managing benchmarks
 ├── event-decoding.bench.ts  # Event decoding benchmarks (3 benchmarks)
+├── indexer-throughput.test.ts # Representative XDR event decoding throughput
 ├── api-responses.bench.ts   # API endpoint benchmarks (4 benchmarks)
 └── rpc-calls.bench.ts       # RPC call benchmarks (5 benchmarks)
 ```
@@ -78,6 +83,7 @@ Runs all three benchmark suites with default iterations.
 
 ```bash
 npm run bench:event-decoding
+npm run bench:indexer-throughput
 npm run bench:api-responses
 npm run bench:rpc-calls
 ```
@@ -144,6 +150,7 @@ Shows all stored benchmark results:
 Available benchmarks:
 
   event-decoding-2026-07-28.json (4.23KB)
+  indexer-throughput-2026-07-28.json (2.45KB)
   api-responses-2026-07-28.json (5.87KB)
   rpc-calls-2026-07-28.json (6.12KB)
   comparison-result.json (2.45KB)

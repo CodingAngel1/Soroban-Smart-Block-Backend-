@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { config } from '../config';
+import { getProfile } from '../profiles';
 
 /**
  * @swagger
@@ -15,7 +16,7 @@ export const networkRouter = Router();
  * /network:
  *   get:
  *     summary: Get active network configuration
- *     description: Returns the current network profile (testnet / mainnet / devnet) and RPC connection details.
+ *     description: Returns the startup-selected network profile. Use the matching network instance; X-Network cannot switch this instance's database or RPC connections.
  *     tags: [Network]
  *     responses:
  *       200:
@@ -42,11 +43,12 @@ export const networkRouter = Router();
  *                   description: Ledger sequence the indexer started from
  *                   example: 0
  */
-networkRouter.get('/', (_req: Request, res: Response) => {
+networkRouter.get('/', (req: Request, res: Response) => {
+  const profile = req.networkProfile ?? getProfile(config.stellarNetwork);
   res.json({
-    network: config.stellarNetwork,
-    rpcUrl: config.stellarRpcUrl,
-    passphrase: config.networkPassphrase,
+    network: profile.name,
+    rpcUrl: profile.rpcUrl,
+    passphrase: profile.networkPassphrase,
     indexerStartLedger: config.indexerStartLedger,
   });
 });

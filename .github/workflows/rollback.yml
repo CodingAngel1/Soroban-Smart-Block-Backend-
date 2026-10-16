@@ -1,0 +1,75 @@
+name: Rollback Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to roll back
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      network:
+        description: Stellar network deployment to roll back
+        required: true
+        type: choice
+        options:
+          - testnet
+          - mainnet
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rollback-${{ inputs.environment }}-${{ inputs.network }}
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Roll back ${{ inputs.network }} in ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.29.0
+
+      - name: Configure staging kubeconfig
+        if: inputs.environment == 'staging'
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_STAGING }}
+        run: |
+          if [ -z "${KUBE_CONFIG:-}" ]; then
+            echo "::error::The staging GitHub Environment has no KUBE_CONFIG_STAGING secret configured."
+            exit 1
+          fi
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBE_CONFIG" | base64 --decode > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Configure production kubeconfig
+        if: inputs.environment == 'production'
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+        run: |
+          if [ -z "${KUBE_CONFIG:-}" ]; then
+            echo "::error::The production GitHub Environment has no KUBE_CONFIG_PRODUCTION secret configured."
+            exit 1
+          fi
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBE_CONFIG" | base64 --decode > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Roll back deployment and verify health
+        run: |
+          if [ "${{ inputs.network }}" = "mainnet" ]; then
+            deployment=soroban-api-mainnet
+          else
+            deployment=soroban-api
+          fi
+          bash scripts/rollback-release.sh soroban "$deployment"
