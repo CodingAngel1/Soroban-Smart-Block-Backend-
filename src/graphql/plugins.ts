@@ -1,6 +1,7 @@
 import { Plugin } from 'graphql-yoga';
 import depthLimit from 'graphql-depth-limit';
-import { GraphQLError } from 'graphql';
+import { getOperationAST, GraphQLError } from 'graphql';
+import { graphqlOperationDuration, graphqlOperationErrorsTotal } from './metrics';
 
 const DEFAULT_MAX_COMPLEXITY = 1000;
 const DEFAULT_MAX_DEPTH = 5;
@@ -36,6 +37,40 @@ export const depthLimitPlugin: Plugin = {
     }
   },
 };
+
+export const graphqlMetricsPlugin: Plugin = {
+  onExecute({ args }) {
+    const operationType =
+      getOperationAST(args.document, args.operationName)?.operation ?? 'unknown';
+    const startTime = process.hrtime.bigint();
+
+    return {
+      onExecuteDone({ result }) {
+        const failed =
+          !isAsyncIterable(result) &&
+          typeof result === 'object' &&
+          result !== null &&
+          'errors' in result &&
+          Array.isArray(result.errors) &&
+          result.errors.length > 0;
+        graphqlOperationDuration.observe(
+          { operation_type: operationType, status: failed ? 'error' : 'success' },
+          Number(process.hrtime.bigint() - startTime) / 1e9,
+        );
+        if (failed) graphqlOperationErrorsTotal.inc({ operation_type: operationType });
+      },
+    };
+  },
+};
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    Symbol.asyncIterator in value &&
+    typeof value[Symbol.asyncIterator] === 'function'
+  );
+}
 
 function calculateComplexity(doc: any): number {
   if (!doc?.definitions) return 0;

@@ -3,6 +3,7 @@ import { realtimeHub } from '../realtime/eventHub';
 import { xdr } from '@stellar/stellar-sdk';
 import { prismaRead, prismaWrite, prismaWrite as prisma } from '../db';
 import { config } from '../config';
+import { recordIndexerFreshness } from './freshness';
 import {
   indexerPipelineStageDuration,
   indexerPipelineStageLag,
@@ -26,6 +27,7 @@ import { dispatchWebhooks } from '../webhooks/dispatcher';
 import { enqueueInitialAudit } from './audit-pipeline';
 import { amIResponsibleFor, getRangeCursor, isP2pEnabled, setRangeCursor } from '../p2p';
 import { logger } from '../logger';
+import { withSpan } from '../tracer';
 import { uuidv7 } from '../utils/uuidv7';
 import { startSavedSearchScheduler, stopSavedSearchScheduler } from './savedSearchRunner';
 import {
@@ -38,11 +40,22 @@ import {
 const BATCH = config.indexerBatchSize;
 const WORKERS = config.indexerCatchupWorkers;
 
+function withIndexerSpan<T>(
+  name: string,
+  attributes: Record<string, string | number | boolean>,
+  operation: () => PromiseLike<T> | T,
+): Promise<T> {
+  return withSpan(name, async (span) => {
+    span.setAttributes({ ...attributes, 'network.name': config.profile.name });
+    return await operation();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // IndexerState helpers & High Availability (HA) Leader Election
 // ---------------------------------------------------------------------------
 
-const getActiveNetwork = (): string => process.env.STELLAR_NETWORK ?? 'mainnet';
+const getActiveNetwork = (): string => config.stellarNetwork;
 
 export async function getLastIndexedLedger(network = getActiveNetwork()): Promise<number> {
   if (isP2pEnabled()) {
@@ -75,6 +88,7 @@ export async function setLastIndexedLedger(
 ): Promise<void> {
   if (isP2pEnabled()) {
     await setRangeCursor(ledger, ledger);
+    await refreshIndexerFreshness(ledger, network);
     return;
   }
 
@@ -92,6 +106,7 @@ export async function setLastIndexedLedger(
         version: 1,
       },
     });
+    await refreshIndexerFreshness(ledger, network);
     return;
   }
 
@@ -117,6 +132,29 @@ export async function setLastIndexedLedger(
       where: { network, id: 'singleton' },
       data: { lastLedger: ledger, version: { increment: 1 } },
     });
+  }
+
+  await refreshIndexerFreshness(ledger, network);
+}
+
+async function refreshIndexerFreshness(ledger: number, network: string): Promise<void> {
+  try {
+    const indexedLedger = await prismaWrite.ledger.findUnique({
+      where: { sequence: ledger },
+      select: { closeTime: true },
+    });
+    if (!indexedLedger) {
+      logger.warn(`[indexer] freshness metrics not updated: ledger ${ledger} is not persisted`);
+      return;
+    }
+
+    const networkTip = await getLatestLedger().catch((error: unknown): undefined => {
+      logger.warn('[indexer] unable to refresh ledger-lag metric from RPC', { error });
+      return undefined;
+    });
+    recordIndexerFreshness(network, ledger, indexedLedger.closeTime, networkTip);
+  } catch (error) {
+    logger.warn('[indexer] unable to refresh indexer freshness metrics', { error });
   }
 }
 
@@ -241,8 +279,23 @@ export async function processLedgerRange(
   start: number,
   end: number,
   opts: { force?: boolean } = {},
-) {
-  logger.info(`Indexing ledgers ${start} → ${end}`);
+): Promise<void> {
+  return withIndexerSpan(
+    'indexer.ledger_range',
+    { 'ledger.range.start': start, 'ledger.range.end': end },
+    () => processLedgerRangeInternal(start, end, opts),
+  );
+}
+
+async function processLedgerRangeInternal(
+  start: number,
+  end: number,
+  opts: { force?: boolean },
+): Promise<void> {
+  logger.info(`Indexing ledgers ${start} → ${end}`, {
+    ledgerSequence: start,
+    ledgerRangeEnd: end,
+  });
 
   // Stage lag metrics update
   try {
@@ -268,10 +321,18 @@ export async function processLedgerRange(
       responsibleSeqs.push(seq);
     }
   }
-  const prefetchedMeta = await fetchLedgerMetadataBatch(responsibleSeqs);
+  const prefetchedMeta = await withIndexerSpan(
+    'indexer.ledger.fetch_metadata',
+    { 'ledger.range.start': start, 'ledger.range.end': end },
+    () => fetchLedgerMetadataBatch(responsibleSeqs),
+  );
 
   for (const seq of responsibleSeqs) {
-    const ledgerMeta = prefetchedMeta.get(seq) ?? (await fetchLedgerMetadata(seq));
+    const ledgerMeta =
+      prefetchedMeta.get(seq) ??
+      (await withIndexerSpan('indexer.ledger.fetch_metadata', { 'ledger.sequence': seq }, () =>
+        fetchLedgerMetadata(seq),
+      ));
 
     // Deep Reorg Check & Extended Backtracking
     const prevSeq = seq - 1;
@@ -280,6 +341,7 @@ export async function processLedgerRange(
     if (prevLedger && prevLedger.hash !== ledgerMeta.previousLedgerHash) {
       logger.warn(
         `🚨 REORG DETECTED at ledger ${seq}! Local hash ${prevLedger.hash} vs network expected ${ledgerMeta.previousLedgerHash}`,
+        { ledgerSequence: seq },
       );
 
       const maxDepth = config.indexerReorgProtectionDepth || 100;
@@ -303,7 +365,7 @@ export async function processLedgerRange(
         } catch (e) {
           logger.error(
             `Failed to fetch remote metadata for deep reorg check at ledger ${checkSeq}`,
-            e,
+            { ledgerSequence: checkSeq, error: e },
           );
           break;
         }
@@ -311,7 +373,9 @@ export async function processLedgerRange(
         if (localCheckLedger.hash === remoteCheckMeta.hash) {
           commonAncestorFound = true;
           commonAncestorSeq = checkSeq;
-          logger.info(`Found common ancestor at ledger sequence ${checkSeq} (depth: ${depth})`);
+          logger.info(`Found common ancestor at ledger sequence ${checkSeq} (depth: ${depth})`, {
+            ledgerSequence: checkSeq,
+          });
           break;
         } else {
           rolledBackSequences.push(checkSeq);
@@ -321,6 +385,7 @@ export async function processLedgerRange(
       if (!commonAncestorFound) {
         logger.error(
           `🚨 DEEP REORG EXCEEDS SAFETY THRESHOLD (${maxDepth} ledgers). Performing safety rollback for ${rolledBackSequences.length} ledgers.`,
+          { ledgerSequence: seq },
         );
       }
 
@@ -345,22 +410,24 @@ export async function processLedgerRange(
 
     // Persist Ledger record
     const stopPersistLedgerTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
-    await prismaWrite.ledger.upsert({
-      where: { sequence: seq },
-      update: {
-        hash: ledgerMeta.hash,
-        previousLedgerHash: ledgerMeta.previousLedgerHash,
-        closeTime: ledgerMeta.closeTime,
-        txCount: ledgerMeta.txCount,
-      },
-      create: {
-        sequence: seq,
-        hash: ledgerMeta.hash,
-        previousLedgerHash: ledgerMeta.previousLedgerHash,
-        closeTime: ledgerMeta.closeTime,
-        txCount: ledgerMeta.txCount,
-      },
-    });
+    await withIndexerSpan('indexer.ledger.persist', { 'ledger.sequence': seq }, () =>
+      prismaWrite.ledger.upsert({
+        where: { sequence: seq },
+        update: {
+          hash: ledgerMeta.hash,
+          previousLedgerHash: ledgerMeta.previousLedgerHash,
+          closeTime: ledgerMeta.closeTime,
+          txCount: ledgerMeta.txCount,
+        },
+        create: {
+          sequence: seq,
+          hash: ledgerMeta.hash,
+          previousLedgerHash: ledgerMeta.previousLedgerHash,
+          closeTime: ledgerMeta.closeTime,
+          txCount: ledgerMeta.txCount,
+        },
+      }),
+    );
     stopPersistLedgerTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
     realtimeHub.publishLedger({
@@ -377,7 +444,11 @@ export async function processLedgerRange(
 
   // Stage 2 & 3: FETCH events & DECODE / PERSIST / ENRICH events and transactions
   const stopEventsFetchTimer = indexerPipelineStageDuration.startTimer({ stage: 'fetch' });
-  const events = await fetchEvents(start, end);
+  const events = await withIndexerSpan(
+    'indexer.events.fetch',
+    { 'ledger.range.start': start, 'ledger.range.end': end },
+    () => fetchEvents(start, end),
+  );
   stopEventsFetchTimer();
 
   // Contracts recur across every event in the range — index each address once
@@ -395,11 +466,16 @@ export async function processLedgerRange(
       pagingToken: event.pagingToken,
     });
     const stopPersistContractTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
-    const contract = await prismaWrite.contract.upsert({
-      where: { address: event.contractId },
-      update: {},
-      create: { address: event.contractId },
-    });
+    const contract = await withIndexerSpan(
+      'indexer.contract.persist',
+      { 'ledger.sequence': event.ledgerSequence },
+      () =>
+        prismaWrite.contract.upsert({
+          where: { address: event.contractId },
+          update: {},
+          create: { address: event.contractId },
+        }),
+    );
     stopPersistContractTimer();
 
     if (!indexedContracts.has(event.contractId)) {
@@ -420,12 +496,21 @@ export async function processLedgerRange(
     if (!existingTx) {
       // Decode Stage
       const stopDecodeTxTimer = indexerPipelineStageDuration.startTimer({ stage: 'decode' });
-      const txResult = await getTransaction(event.transactionHash).catch(() =>
-        getTransactionFromHorizon(event.transactionHash).catch((): null => null),
+      const txResult = await withIndexerSpan(
+        'indexer.transaction.fetch',
+        { 'ledger.sequence': event.ledgerSequence },
+        () =>
+          getTransaction(event.transactionHash).catch(() =>
+            getTransactionFromHorizon(event.transactionHash).catch((): null => null),
+          ),
       );
       const rawXdr = (txResult as any)?.envelopeXdr?.toXDR('base64') ?? '';
       const decoded = rawXdr
-        ? await decodeTransaction(rawXdr)
+        ? await withIndexerSpan(
+            'indexer.transaction.decode',
+            { 'ledger.sequence': event.ledgerSequence },
+            () => decodeTransaction(rawXdr),
+          )
         : {
             contractAddress: event.contractId,
             functionName: null,
@@ -437,24 +522,29 @@ export async function processLedgerRange(
 
       // Persist Stage
       const stopPersistTxTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
-      const transaction = await prismaWrite.transaction.upsert({
-        where: { hash: event.transactionHash },
-        update: {},
-        create: {
-          id: uuidv7(),
-          hash: event.transactionHash,
-          ledgerSequence: event.ledgerSequence,
-          ledgerCloseTime: event.ledgerCloseTime,
-          sourceAccount: (txResult as any)?.sourceAccount ?? 'unknown',
-          contractAddress: decoded.contractAddress,
-          functionName: decoded.functionName,
-          functionArgs: (decoded.functionArgs as object) ?? undefined,
-          rawXdr,
-          status: (txResult as any)?.status === 'SUCCESS' ? 'success' : 'failed',
-          humanReadable: decoded.humanReadable,
-          feeCharged: String((txResult as any)?.feeCharged ?? ''),
-        },
-      });
+      const transaction = await withIndexerSpan(
+        'indexer.transaction.persist',
+        { 'ledger.sequence': event.ledgerSequence },
+        () =>
+          prismaWrite.transaction.upsert({
+            where: { hash: event.transactionHash },
+            update: {},
+            create: {
+              id: uuidv7(),
+              hash: event.transactionHash,
+              ledgerSequence: event.ledgerSequence,
+              ledgerCloseTime: event.ledgerCloseTime,
+              sourceAccount: (txResult as any)?.sourceAccount ?? 'unknown',
+              contractAddress: decoded.contractAddress,
+              functionName: decoded.functionName,
+              functionArgs: (decoded.functionArgs as object) ?? undefined,
+              rawXdr,
+              status: (txResult as any)?.status === 'SUCCESS' ? 'success' : 'failed',
+              humanReadable: decoded.humanReadable,
+              feeCharged: String((txResult as any)?.feeCharged ?? ''),
+            },
+          }),
+      );
       stopPersistTxTimer();
       indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
 
@@ -512,7 +602,11 @@ export async function processLedgerRange(
 
     // Decode & Persist Event
     const stopDecodeEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'decode' });
-    const { eventType, decoded } = decodeEvent(event.topics, event.data);
+    const { eventType, decoded } = await withIndexerSpan(
+      'indexer.event.decode',
+      { 'ledger.sequence': event.ledgerSequence },
+      async () => decodeEvent(event.topics, event.data),
+    );
     stopDecodeEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'decode', status: 'success' });
 
@@ -520,21 +614,26 @@ export async function processLedgerRange(
     const eventId = `${event.transactionHash}-${positionKey}`;
 
     const stopPersistEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
-    const savedEvent = await prismaWrite.event.upsert({
-      where: { id: eventId },
-      update: {},
-      create: {
-        id: eventId,
-        transactionHash: event.transactionHash,
-        contractAddress: event.contractId,
-        eventType,
-        topics: event.topics,
-        data: { raw: event.data },
-        decoded: decoded as object,
-        ledgerSequence: event.ledgerSequence,
-        ledgerCloseTime: event.ledgerCloseTime,
-      },
-    });
+    const savedEvent = await withIndexerSpan(
+      'indexer.event.persist',
+      { 'ledger.sequence': event.ledgerSequence },
+      () =>
+        prismaWrite.event.upsert({
+          where: { id: eventId },
+          update: {},
+          create: {
+            id: eventId,
+            transactionHash: event.transactionHash,
+            contractAddress: event.contractId,
+            eventType,
+            topics: event.topics,
+            data: { raw: event.data },
+            decoded: decoded as object,
+            ledgerSequence: event.ledgerSequence,
+            ledgerCloseTime: event.ledgerCloseTime,
+          },
+        }),
+    );
     stopPersistEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
 
@@ -863,6 +962,7 @@ function sleep(ms: number) {
 }
 
 let currentWorker: SorobanEventWorker | null = null;
+let currentWorkerTask: Promise<void> | null = null;
 
 export async function runIndexer() {
   await startIndexerService();
@@ -871,17 +971,20 @@ export async function runIndexer() {
 export async function startIndexerService() {
   const worker = new SorobanEventWorker();
   currentWorker = worker;
-  await worker.start();
   // Match newly indexed contracts/events against stored saved searches (#966).
   startSavedSearchScheduler();
+  currentWorkerTask = worker.start();
+  await currentWorkerTask;
 }
 
-export function stopIndexerService(): void {
+export async function stopIndexerService(): Promise<void> {
   stopSavedSearchScheduler();
   if (currentWorker) {
     currentWorker.stop();
-    currentWorker = null;
   }
+  await currentWorkerTask;
+  currentWorker = null;
+  currentWorkerTask = null;
 }
 
 export class SorobanEventWorker {

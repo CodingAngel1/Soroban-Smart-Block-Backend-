@@ -31,7 +31,8 @@ vi.mock('../../src/cache', () => ({
 
 vi.mock('../../src/config', () => ({
   config: {
-    profile: { name: 'devnet' },
+    profile: { name: 'devnet', rpcFallbackUrls: [] },
+    stellarNetwork: 'devnet',
     stellarRpcUrl: 'http://localhost:8000',
     stellarRpcWsUrl: 'ws://localhost:8000',
     horizonUrl: 'https://horizon-testnet.stellar.org',
@@ -66,7 +67,7 @@ describe('RPC/Horizon outbound metrics (#910)', () => {
 
     const out = await metricText('rpc_call_duration_seconds');
     expect(out).toContain(
-      'rpc_call_duration_seconds_count{operation="getEvents",status="success"}',
+      'rpc_call_duration_seconds_count{network="devnet",operation="getEvents",status="success"}',
     );
   });
 
@@ -76,11 +77,13 @@ describe('RPC/Horizon outbound metrics (#910)', () => {
 
     const duration = await metricText('rpc_call_duration_seconds');
     expect(duration).toContain(
-      'rpc_call_duration_seconds_count{operation="getEvents",status="error"}',
+      'rpc_call_duration_seconds_count{network="devnet",operation="getEvents",status="error"}',
     );
 
     const errors = await metricText('rpc_call_errors_total');
-    expect(errors).toContain('rpc_call_errors_total{operation="getEvents",type="error"} 1');
+    expect(errors).toContain(
+      'rpc_call_errors_total{network="devnet",operation="getEvents",type="error"} 1',
+    );
   });
 
   it('counts rate-limit retries in rpc_call_retries_total', async () => {
@@ -95,10 +98,12 @@ describe('RPC/Horizon outbound metrics (#910)', () => {
     await fetchPromise;
 
     const retries = await metricText('rpc_call_retries_total');
-    expect(retries).toContain('rpc_call_retries_total{operation="getEvents"} 1');
+    expect(retries).toContain('rpc_call_retries_total{network="devnet",operation="getEvents"} 1');
 
     const errors = await metricText('rpc_call_errors_total');
-    expect(errors).toContain('rpc_call_errors_total{operation="getEvents",type="rate_limit"} 1');
+    expect(errors).toContain(
+      'rpc_call_errors_total{network="devnet",operation="getEvents",type="rate_limit"} 1',
+    );
   });
 
   it('records horizon_call_duration_seconds for Horizon transaction lookups', async () => {
@@ -135,7 +140,7 @@ describe('RPC/Horizon outbound metrics (#910)', () => {
 
     const out = await metricText('rpc_call_duration_seconds');
     expect(out).toContain(
-      'rpc_call_duration_seconds_count{operation="getLatestLedger",status="success"}',
+      'rpc_call_duration_seconds_count{network="devnet",operation="getLatestLedger",status="success"}',
     );
   });
 });

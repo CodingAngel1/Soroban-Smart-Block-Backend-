@@ -30,7 +30,7 @@ from .errors import (
     error_from_response,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 DEFAULT_BASE_URL = "https://api.soroban.network/api/v1"
 
 logger = logging.getLogger("soroban_explorer")

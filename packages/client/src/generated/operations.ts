@@ -4,7 +4,7 @@ import type * as Models from './models';
 
 export const SPEC_VERSION = "1.0.0" as const;
 /** SHA-256 (first 16 hex chars) of the normalized API surface this file was generated from. */
-export const SPEC_FINGERPRINT = "e92010e2f69aeeee" as const;
+export const SPEC_FINGERPRINT = "5fc6b3bd018fca34" as const;
 
 export type ParamType = 'string' | 'integer' | 'number' | 'boolean' | 'array' | 'object';
 
@@ -31,6 +31,52 @@ export interface OperationSpec {
 }
 
 export const OPERATIONS = {
+  getAdminContractAbiSubmissions: {
+    method: 'GET',
+    path: "/admin/contract-abi-submissions",
+    pathParams: [],
+    query: [
+      { name: "limit", type: 'integer', required: false, minimum: 1, maximum: 100 },
+      { name: "page", type: 'integer', required: false, minimum: 1 },
+      { name: "status", type: 'string', required: false, enum: ["pending","approved","rejected","published"] },
+    ],
+    body: 'none',
+    deprecated: false,
+    tags: ["Admin"],
+    summary: "List contract ABI submissions for moderation",
+  },
+  postAdminContractAbiSubmissionsByIdApprove: {
+    method: 'POST',
+    path: "/admin/contract-abi-submissions/{id}/approve",
+    pathParams: ["id"],
+    query: [],
+    body: 'optional',
+    contentType: "application/json",
+    deprecated: false,
+    tags: ["Admin"],
+    summary: "Approve a pending contract ABI submission",
+  },
+  postAdminContractAbiSubmissionsByIdPublish: {
+    method: 'POST',
+    path: "/admin/contract-abi-submissions/{id}/publish",
+    pathParams: ["id"],
+    query: [],
+    body: 'none',
+    deprecated: false,
+    tags: ["Admin"],
+    summary: "Publish an approved ABI into the contract registry",
+  },
+  postAdminContractAbiSubmissionsByIdReject: {
+    method: 'POST',
+    path: "/admin/contract-abi-submissions/{id}/reject",
+    pathParams: ["id"],
+    query: [],
+    body: 'required',
+    contentType: "application/json",
+    deprecated: false,
+    tags: ["Admin"],
+    summary: "Reject a pending contract ABI submission",
+  },
   getAdvancedEvents: {
     method: 'GET',
     path: "/advanced-events",
@@ -649,6 +695,26 @@ export const OPERATIONS = {
     tags: ["Compiler"],
     summary: "Verify source code matches a deployed contract's WASM hash",
   },
+  getComplianceTokenLabelsByTokenId: {
+    method: 'GET',
+    path: "/compliance/token-labels/{tokenId}",
+    pathParams: ["tokenId"],
+    query: [],
+    body: 'none',
+    deprecated: false,
+    tags: ["Token Labels"],
+    summary: "Accreditation and risk labels for a token, with reasons",
+  },
+  putComplianceTokenLabelsByTokenId: {
+    method: 'PUT',
+    path: "/compliance/token-labels/{tokenId}",
+    pathParams: ["tokenId"],
+    query: [],
+    body: 'none',
+    deprecated: false,
+    tags: ["Token Labels"],
+    summary: "Upsert a label (admin). One label per kind+code+source.",
+  },
   postComposabilityAlerts: {
     method: 'POST',
     path: "/composability/alerts",
@@ -997,6 +1063,47 @@ export const OPERATIONS = {
     tags: ["Contracts"],
     summary: "Register or update contract ABI metadata",
   },
+  postContractsAbiSubmissions: {
+    method: 'POST',
+    path: "/contracts/abi-submissions",
+    pathParams: [],
+    query: [],
+    body: 'required',
+    contentType: "application/json",
+    deprecated: false,
+    tags: ["Contracts"],
+    summary: "Submit contract ABI metadata for moderation",
+  },
+  getContractsLicenses: {
+    method: 'GET',
+    path: "/contracts/licenses",
+    pathParams: [],
+    query: [],
+    body: 'none',
+    deprecated: false,
+    tags: ["Contract Licenses"],
+    summary: "Search registered contract licenses (?license=MIT&limit=20)",
+  },
+  getContractsLicensesByContractId: {
+    method: 'GET',
+    path: "/contracts/licenses/{contractId}",
+    pathParams: ["contractId"],
+    query: [],
+    body: 'none',
+    deprecated: false,
+    tags: ["Contract Licenses"],
+    summary: "License and attribution for a contract",
+  },
+  putContractsLicensesByContractId: {
+    method: 'PUT',
+    path: "/contracts/licenses/{contractId}",
+    pathParams: ["contractId"],
+    query: [],
+    body: 'none',
+    deprecated: false,
+    tags: ["Contract Licenses"],
+    summary: "Register or update license metadata (authenticated)",
+  },
   getContractsByAddress: {
     method: 'GET',
     path: "/contracts/{address}",
@@ -1174,6 +1281,17 @@ export const OPERATIONS = {
     deprecated: false,
     tags: ["Graph"],
     summary: "Get graph data for visual exploration (D3.js/Cytoscape compatible)",
+  },
+  postGraphQuery: {
+    method: 'POST',
+    path: "/graph/query",
+    pathParams: [],
+    query: [],
+    body: 'required',
+    contentType: "application/json",
+    deprecated: false,
+    tags: ["Graph"],
+    summary: "Execute parameterized Cypher query",
   },
   postGraphTemplatesCommunityDetection: {
     method: 'POST',
@@ -3363,6 +3481,17 @@ export const OPERATIONS = {
     tags: ["RWA Compliance"],
     summary: "Get regulatory compliance reports",
   },
+  postRwaComplianceReportsSchedule: {
+    method: 'POST',
+    path: "/rwa-compliance/reports/schedule",
+    pathParams: [],
+    query: [],
+    body: 'required',
+    contentType: "application/json",
+    deprecated: false,
+    tags: ["RWA Compliance"],
+    summary: "Schedule recurring RWA compliance report generation and delivery",
+  },
   getSacTrustlines: {
     method: 'GET',
     path: "/sac-trustlines",
@@ -5462,9 +5591,51 @@ export const OPERATIONS = {
 
 export type OperationId = keyof typeof OPERATIONS;
 
-export const OPERATION_COUNT = 494 as const;
+export const OPERATION_COUNT = 506 as const;
 
 export interface OperationTypes {
+  /** GET /admin/contract-abi-submissions — List contract ABI submissions for moderation */
+  getAdminContractAbiSubmissions: {
+    path: Record<string, never>;
+    query: {
+      limit?: number;
+      page?: number;
+      status?: "pending" | "approved" | "rejected" | "published";
+    };
+    body: never;
+    response: unknown;
+  };
+  /** POST /admin/contract-abi-submissions/{id}/approve — Approve a pending contract ABI submission */
+  postAdminContractAbiSubmissionsByIdApprove: {
+    path: {
+      id: string;
+    };
+    query: Record<string, never>;
+    body: {
+      reviewNote?: string;
+    };
+    response: unknown;
+  };
+  /** POST /admin/contract-abi-submissions/{id}/publish — Publish an approved ABI into the contract registry */
+  postAdminContractAbiSubmissionsByIdPublish: {
+    path: {
+      id: string;
+    };
+    query: Record<string, never>;
+    body: never;
+    response: unknown;
+  };
+  /** POST /admin/contract-abi-submissions/{id}/reject — Reject a pending contract ABI submission */
+  postAdminContractAbiSubmissionsByIdReject: {
+    path: {
+      id: string;
+    };
+    query: Record<string, never>;
+    body: {
+      reviewNote: string;
+    };
+    response: unknown;
+  };
   /** GET /advanced-events — Advanced Events service overview */
   getAdvancedEvents: {
     path: Record<string, never>;
@@ -6155,6 +6326,24 @@ export interface OperationTypes {
     body: string;
     response: unknown;
   };
+  /** GET /compliance/token-labels/{tokenId} — Accreditation and risk labels for a token, with reasons */
+  getComplianceTokenLabelsByTokenId: {
+    path: {
+      tokenId: string;
+    };
+    query: Record<string, never>;
+    body: never;
+    response: unknown;
+  };
+  /** PUT /compliance/token-labels/{tokenId} — Upsert a label (admin). One label per kind+code+source. */
+  putComplianceTokenLabelsByTokenId: {
+    path: {
+      tokenId: string;
+    };
+    query: Record<string, never>;
+    body: never;
+    response: unknown;
+  };
   /** POST /composability/alerts — Subscribe to composability alerts */
   postComposabilityAlerts: {
     path: Record<string, never>;
@@ -6238,7 +6427,7 @@ export interface OperationTypes {
     };
     query: Record<string, never>;
     body: never;
-    response: (unknown);
+    response: (Models.ContractComposabilityProfile);
   };
   /** GET /composability/contracts/{address}/callees — Callee count for a contract */
   getComposabilityContractsByAddressCallees: {
@@ -6277,7 +6466,7 @@ export interface OperationTypes {
       createdAt?: string;
       details?: Record<string, unknown> | null;
       id?: string;
-      pattern?: unknown;
+      pattern?: Models.CompositionPattern;
       patternId?: string;
       txId?: string;
     }>;
@@ -6301,7 +6490,7 @@ export interface OperationTypes {
     path: Record<string, never>;
     query: Record<string, never>;
     body: never;
-    response: (unknown);
+    response: (Models.EcosystemComposabilityIndex);
   };
   /** GET /composability/ecosystem-index/history — Historical ecosystem index snapshots */
   getComposabilityEcosystemIndexHistory: {
@@ -6310,7 +6499,7 @@ export interface OperationTypes {
       limit?: number;
     };
     body: never;
-    response: Array<unknown>;
+    response: Array<Models.EcosystemComposabilityIndex>;
   };
   /** GET /composability/exploit-database — Browse the composability exploit knowledge base */
   getComposabilityExploitDatabase: {
@@ -6319,7 +6508,7 @@ export interface OperationTypes {
       category?: string;
     };
     body: never;
-    response: Array<unknown>;
+    response: Array<Models.ComposabilityExploit>;
   };
   /** POST /composability/exploit-database — Add an exploit entry to the knowledge base */
   postComposabilityExploitDatabase: {
@@ -6335,7 +6524,7 @@ export interface OperationTypes {
       severity: "critical" | "high" | "medium" | "low";
       title: string;
     };
-    response: (unknown);
+    response: (Models.ComposabilityExploit);
   };
   /** POST /composability/exploit/check — Check a call sequence for exploit patterns */
   postComposabilityExploitCheck: {
@@ -6361,7 +6550,7 @@ export interface OperationTypes {
     path: Record<string, never>;
     query: Record<string, never>;
     body: never;
-    response: Array<unknown>;
+    response: Array<Models.CompositionAlert>;
   };
   /** GET /composability/fuzz/{campaignId} — Fuzz campaign record */
   getComposabilityFuzzByCampaignId: {
@@ -6370,7 +6559,7 @@ export interface OperationTypes {
     };
     query: Record<string, never>;
     body: never;
-    response: (unknown);
+    response: (Models.ComposabilityFuzzCampaign);
   };
   /** GET /composability/fuzz/{campaignId}/coverage — Coverage summary for a fuzz campaign */
   getComposabilityFuzzByCampaignIdCoverage: {
@@ -6470,7 +6659,7 @@ export interface OperationTypes {
     path: Record<string, never>;
     query: Record<string, never>;
     body: never;
-    response: Array<unknown>;
+    response: Array<Models.CompositionPattern>;
   };
   /** POST /composability/patterns — Add a new pattern to the catalogue */
   postComposabilityPatterns: {
@@ -6486,7 +6675,7 @@ export interface OperationTypes {
       riskRating?: "safe" | "low_risk" | "medium_risk" | "high_risk" | "critical";
       safeIf?: unknown;
     };
-    response: (unknown);
+    response: (Models.CompositionPattern);
   };
   /** GET /composability/patterns/{id} — Pattern detail with the 20 most recent instances */
   getComposabilityPatternsById: {
@@ -6495,7 +6684,7 @@ export interface OperationTypes {
     };
     query: Record<string, never>;
     body: never;
-    response: (unknown);
+    response: (Models.CompositionPattern);
   };
   /** GET /composability/report/{txHash} — Full composability report for a transaction */
   getComposabilityReportByTxHash: {
@@ -6549,7 +6738,7 @@ export interface OperationTypes {
     };
     query: Record<string, never>;
     body: never;
-    response: (unknown);
+    response: (Models.ComposabilityStaticAnalysis);
   };
   /** GET /composability/transactions/{txHash} — Composed transaction with detected pattern instances */
   getComposabilityTransactionsByTxHash: {
@@ -6558,7 +6747,7 @@ export interface OperationTypes {
     };
     query: Record<string, never>;
     body: never;
-    response: (unknown);
+    response: (Models.ComposedTransaction);
   };
   /** POST /composability/verify/{txHash} — Verify composition safety for a previously analysed transaction */
   postComposabilityVerifyByTxHash: {
@@ -6567,7 +6756,7 @@ export interface OperationTypes {
     };
     query: Record<string, never>;
     body: never;
-    response: (unknown);
+    response: (Models.ComposabilityVerification);
   };
   /** GET /composability/verify/{txHash}/proof — Verification proof data for a transaction */
   getComposabilityVerifyByTxHashProof: {
@@ -6623,6 +6812,67 @@ export interface OperationTypes {
       wasmHash?: string;
     };
     response: Models.Contract;
+  };
+  /** POST /contracts/abi-submissions — Submit contract ABI metadata for moderation */
+  postContractsAbiSubmissions: {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: {
+      abi: {
+        /** Optional event definitions checked against indexed topic symbols */
+        events?: Array<{
+          inputs?: Array<Record<string, unknown>>;
+          name: string;
+        }>;
+        functions: Array<{
+          humanTemplate?: string;
+          inputs: Array<{
+            name: string;
+            type: string;
+          }>;
+          name: string;
+          outputs?: Array<{
+            type: string;
+          }>;
+        }>;
+      };
+      abiVersion?: string;
+      /** Stellar contract address */
+      address: string;
+      deployedAtLedger?: number;
+      description?: string;
+      name?: string;
+      network: "testnet" | "mainnet" | "devnet";
+      protocolKey?: string;
+      version?: string;
+      wasmHash?: string;
+    };
+    response: unknown;
+  };
+  /** GET /contracts/licenses — Search registered contract licenses (?license=MIT&limit=20) */
+  getContractsLicenses: {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: never;
+    response: unknown;
+  };
+  /** GET /contracts/licenses/{contractId} — License and attribution for a contract */
+  getContractsLicensesByContractId: {
+    path: {
+      contractId: string;
+    };
+    query: Record<string, never>;
+    body: never;
+    response: unknown;
+  };
+  /** PUT /contracts/licenses/{contractId} — Register or update license metadata (authenticated) */
+  putContractsLicensesByContractId: {
+    path: {
+      contractId: string;
+    };
+    query: Record<string, never>;
+    body: never;
+    response: unknown;
   };
   /** GET /contracts/{address} — Get a contract with its 10 most recent transactions and events */
   getContractsByAddress: {
@@ -6882,6 +7132,25 @@ export interface OperationTypes {
       edges?: Array<Record<string, unknown>>;
       metadata?: Record<string, unknown>;
       nodes?: Array<Record<string, unknown>>;
+    };
+  };
+  /** POST /graph/query — Execute parameterized Cypher query */
+  postGraphQuery: {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: {
+      /** Query parameters */
+      parameters?: Record<string, unknown>;
+      /** Parameterized Cypher query */
+      query?: string;
+      /** Query timeout in ms (default: 5000) */
+      timeout?: number;
+    };
+    response: {
+      data?: Array<unknown>;
+      edgeCount?: number;
+      executionTime?: number;
+      nodeCount?: number;
     };
   };
   /** POST /graph/templates/community-detection — Detect communities (Sybil cluster identification) */
@@ -9551,6 +9820,19 @@ export interface OperationTypes {
     body: never;
     response: unknown;
   };
+  /** POST /rwa-compliance/reports/schedule — Schedule recurring RWA compliance report generation and delivery */
+  postRwaComplianceReportsSchedule: {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: {
+      cadence: "daily" | "weekly" | "monthly";
+      delivery: {
+        email?: string;
+        webhook?: string;
+      };
+    };
+    response: unknown;
+  };
   /** GET /sac-trustlines — SAC trustlines service overview */
   getSacTrustlines: {
     path: Record<string, never>;
@@ -12107,8 +12389,12 @@ export interface OperationTypes {
     path: Record<string, never>;
     query: Record<string, never>;
     body: {
+      batchSize?: number;
+      batchWindowMs?: number;
       /** Filter to a specific contract (omit for all contracts) */
       contractAddress?: string;
+      /** Batch mode requires the webhookBatchDelivery feature flag. */
+      deliveryStrategy?: "immediate" | "batch";
       /** Filter to a specific event type (e.g. "transfer") */
       eventType?: string;
       /** Optional signing secret (min 32 chars). If omitted a 256-bit random secret is generated for you. The value is returned only once — it cannot be retrieved again. */
@@ -12135,7 +12421,10 @@ export interface OperationTypes {
     query: Record<string, never>;
     body: {
       active?: boolean;
+      batchSize?: number;
+      batchWindowMs?: number;
       contractAddress?: string | null;
+      deliveryStrategy?: "immediate" | "batch";
       eventType?: string | null;
       topicSymbol?: string | null;
       url?: string;
@@ -12190,6 +12479,10 @@ export interface OperationTypes {
 }
 
 export interface OperationParams {
+  getAdminContractAbiSubmissions: { path?: Record<string, never>; query?: OperationTypes['getAdminContractAbiSubmissions']['query']; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
+  postAdminContractAbiSubmissionsByIdApprove: { path: OperationTypes['postAdminContractAbiSubmissionsByIdApprove']['path']; query?: Record<string, never>; body?: OperationTypes['postAdminContractAbiSubmissionsByIdApprove']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
+  postAdminContractAbiSubmissionsByIdPublish: { path: OperationTypes['postAdminContractAbiSubmissionsByIdPublish']['path']; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
+  postAdminContractAbiSubmissionsByIdReject: { path: OperationTypes['postAdminContractAbiSubmissionsByIdReject']['path']; query?: Record<string, never>; body: OperationTypes['postAdminContractAbiSubmissionsByIdReject']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
   getAdvancedEvents: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getAdvancedEventsAggregations: { path?: Record<string, never>; query?: OperationTypes['getAdvancedEventsAggregations']['query']; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getAdvancedEventsContractsByContractId: { path: OperationTypes['getAdvancedEventsContractsByContractId']['path']; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
@@ -12246,6 +12539,8 @@ export interface OperationParams {
   getCompilerMetrics: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getCompilerToolchains: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   postCompilerVerify: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postCompilerVerify']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
+  getComplianceTokenLabelsByTokenId: { path: OperationTypes['getComplianceTokenLabelsByTokenId']['path']; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
+  putComplianceTokenLabelsByTokenId: { path: OperationTypes['putComplianceTokenLabelsByTokenId']['path']; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   postComposabilityAlerts: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postComposabilityAlerts']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
   postComposabilityAnalyze: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postComposabilityAnalyze']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
   postComposabilityAnalyzeBatch: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postComposabilityAnalyzeBatch']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
@@ -12279,6 +12574,10 @@ export interface OperationParams {
   getComposabilityVerifyByTxHashProof: { path: OperationTypes['getComposabilityVerifyByTxHashProof']['path']; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getContracts: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   postContracts: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postContracts']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
+  postContractsAbiSubmissions: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postContractsAbiSubmissions']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
+  getContractsLicenses: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
+  getContractsLicensesByContractId: { path: OperationTypes['getContractsLicensesByContractId']['path']; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
+  putContractsLicensesByContractId: { path: OperationTypes['putContractsLicensesByContractId']['path']; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getContractsByAddress: { path: OperationTypes['getContractsByAddress']['path']; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getContractsByAddressStats: { path: OperationTypes['getContractsByAddressStats']['path']; query?: OperationTypes['getContractsByAddressStats']['query']; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getEvents: { path?: Record<string, never>; query?: OperationTypes['getEvents']['query']; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
@@ -12294,6 +12593,7 @@ export interface OperationParams {
   getGraphDependencies: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getGraphDependenciesSvg: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getGraphExplorer: { path?: Record<string, never>; query?: OperationTypes['getGraphExplorer']['query']; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
+  postGraphQuery: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postGraphQuery']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
   postGraphTemplatesCommunityDetection: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postGraphTemplatesCommunityDetection']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
   postGraphTemplatesContractCalls: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postGraphTemplatesContractCalls']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
   postGraphTemplatesInfluence: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postGraphTemplatesInfluence']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
@@ -12493,6 +12793,7 @@ export interface OperationParams {
   postRwaComplianceHoldersByAddressVerify: { path: OperationTypes['postRwaComplianceHoldersByAddressVerify']['path']; query?: Record<string, never>; body: OperationTypes['postRwaComplianceHoldersByAddressVerify']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
   getRwaComplianceJurisdictions: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getRwaComplianceReports: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
+  postRwaComplianceReportsSchedule: { path?: Record<string, never>; query?: Record<string, never>; body: OperationTypes['postRwaComplianceReportsSchedule']['body']; signal?: AbortSignal; headers?: Record<string, string>; };
   getSacTrustlines: { path?: Record<string, never>; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getSacTrustlinesAccountsByAddress: { path: OperationTypes['getSacTrustlinesAccountsByAddress']['path']; query?: OperationTypes['getSacTrustlinesAccountsByAddress']['query']; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };
   getSacTrustlinesAccountsByAddressAuthorized: { path: OperationTypes['getSacTrustlinesAccountsByAddressAuthorized']['path']; query?: Record<string, never>; body?: never; signal?: AbortSignal; headers?: Record<string, string>; };

@@ -14,8 +14,7 @@
  *
  * Flags:
  *   --max-orphans N  Fail only when the number of orphaned routers exceeds N.
- *                     Defaults to 0 (strict). CI uses a gradual budget so
- *                     existing orphans can be cleaned up incrementally.
+ *                     Defaults to 0 (strict); CI also enforces 0.
  */
 
 import * as fs from 'fs';
@@ -203,8 +202,7 @@ function detectConflicts(prefixes: string[]): RouteConflict[] {
  * Main validation function
  *
  * @param maxOrphans Maximum tolerated number of orphaned routers before
- *   validation fails. CI uses a non-zero budget to enforce gradual cleanup;
- *   pass 0 (default) for strict mode.
+ *   validation fails. CI uses a strict zero-orphan budget.
  */
 export function validateRoutes(maxOrphans = ORPHANED_ROUTER_BUDGET): ValidationResult {
   const discoveredFiles = discoverRouterFiles();

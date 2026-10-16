@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["metrics"]
 }
 
 datasource db {
@@ -327,11 +328,7 @@ model ContractAbiSubmission {
 
   events ContractAbiSubmissionEvent[]
 
-  @@unique(
-    [address, network, submittedBy, contentHash],
-    name: "address_network_submitter_content",
-    map: "_contract_abi_submissions_address_network_submitter_content_key"
-  )
+  @@unique([address, network, submittedBy, contentHash], name: "address_network_submitter_content", map: "_contract_abi_submissions_address_network_submitter_content_key")
   @@index([status, createdAt])
   @@index([address, network])
   @@map("_contract_abi_submissions")

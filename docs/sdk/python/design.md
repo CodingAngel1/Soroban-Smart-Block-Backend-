@@ -1,6 +1,6 @@
 # Python Client — Design (DX02)
 
-Status: implemented · Package: `packages/python-client` (`soroban-explorer-client` 1.0.0)
+Status: implemented · Package: `packages/python-client` (`soroban-explorer-client` 1.1.0)
 
 ## Shape: generated core + thin wrapper
 
