@@ -166,7 +166,7 @@ batchRouter.post(
         error: err instanceof Error ? err.message : String(err),
       });
       return res.status(503).json({
-        data: ids.map(() => null),
+        data: ids.map((_id): null => null),
         missing: [],
         errors: [...errors, ...lookupFailedErrors(validItems.map(({ index }) => index))],
       });
@@ -331,7 +331,7 @@ batchRouter.post(
         error: err instanceof Error ? err.message : String(err),
       });
       return res.status(503).json({
-        data: hashes.map(() => null),
+        data: hashes.map((_hash): null => null),
         missing: [],
         errors: [...errors, ...lookupFailedErrors(validItems.map(({ index }) => index))],
       });
@@ -468,7 +468,7 @@ batchRouter.post(
         error: err instanceof Error ? err.message : String(err),
       });
       return res.status(503).json({
-        data: addresses.map(() => null),
+        data: addresses.map((_address): null => null),
         inactive: [],
         errors: [...errors, ...lookupFailedErrors(validItems.map(({ index }) => index))],
       });
