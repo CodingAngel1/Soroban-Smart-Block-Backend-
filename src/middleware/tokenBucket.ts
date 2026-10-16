@@ -5,11 +5,11 @@
  * (similar to CL.THROTTLE from redis-cell). Falls back to an in-memory map
  * when Redis is unavailable.
  *
- * Tiers:
- *   unauthenticated  60 req/min  burst 10
- *   free            1000 req/min burst 50
- *   pro            10000 req/min burst 200
- *   enterprise      custom      custom
+ * Default tiers:
+ *   unauthenticated    60 req/min    burst 10
+ *   free / developer 1000 req/min    burst 50
+ *   pro             10000 req/min    burst 200
+ *   enterprise      60000 req/min    burst 500
  *
  * Per-endpoint groups add an additional multiplier on top of the tier limit.
  */
