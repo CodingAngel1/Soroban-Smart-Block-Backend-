@@ -4,7 +4,7 @@
 
 from typing import Dict, List, Literal, Optional, TypedDict, Union
 
-__all__ = ["AnonymitySetSnapshot", "Contract", "CronExecution", "CronJob", "DeAnonymizationFinding", "Error", "Event", "FuzzFinding", "FuzzRun", "GovernanceTimelock", "LeaderboardEntry", "MevAlert", "MevAttacker", "MevEvent", "MevOverview", "MevVictim", "OracleReputationResponse", "PrivacyAnalytics", "PrivacyComplianceReport", "PrivacyProtocolDetail", "PrivacyProtocolInfo", "PrivacyTransaction", "ProtocolMevResistance", "ReputationAttestationRecord", "ReputationBadge", "ReputationBreakdownItem", "ReputationChainScore", "ReputationDisputeRecord", "ReputationEndorsement", "ReputationLinkedIdentity", "ReputationNftRecord", "ReputationProfileRecord", "ReputationProof", "ReputationScoreResult", "ReputationVerifiableCredential", "RevertAnalysis", "SandboxAccount", "SandboxCallResult", "SandboxCiResult", "SandboxContract", "SandboxOptimizeResult", "SandboxSession", "SandboxShare", "SandboxSnapshot", "SandboxTemplate", "SandboxTemplateParams", "SandboxVerifyResult", "ScheduledOperation", "SimulationTrace", "StorageEfficiencyLog", "SybilAssessment", "ThreatAdvisory", "ThreatComment", "ThreatReview", "TimerAlert", "TipSubscription", "Token", "Transaction", "TrustPath", "VerifiedIdentityLink", "VestingSchedule", "VulnerabilitySource", "WebhookSubscription", "ZodFlattenedError", "ZodValidationError"]
+__all__ = ["AnonymitySetSnapshot", "ComposabilityExploit", "ComposabilityFuzzCampaign", "ComposabilityStaticAnalysis", "ComposabilityVerification", "ComposedTransaction", "CompositionAlert", "CompositionPattern", "Contract", "ContractComposabilityProfile", "CronExecution", "CronJob", "DeAnonymizationFinding", "EcosystemComposabilityIndex", "Error", "Event", "FuzzFinding", "FuzzRun", "GovernanceTimelock", "LeaderboardEntry", "MevAlert", "MevAttacker", "MevEvent", "MevOverview", "MevVictim", "OracleReputationResponse", "PrivacyAnalytics", "PrivacyComplianceReport", "PrivacyProtocolDetail", "PrivacyProtocolInfo", "PrivacyTransaction", "ProtocolMevResistance", "ReputationAttestationRecord", "ReputationBadge", "ReputationBreakdownItem", "ReputationChainScore", "ReputationDisputeRecord", "ReputationEndorsement", "ReputationLinkedIdentity", "ReputationNftRecord", "ReputationProfileRecord", "ReputationProof", "ReputationScoreResult", "ReputationVerifiableCredential", "RevertAnalysis", "SandboxAccount", "SandboxCallResult", "SandboxCiResult", "SandboxContract", "SandboxOptimizeResult", "SandboxSession", "SandboxShare", "SandboxSnapshot", "SandboxTemplate", "SandboxTemplateParams", "SandboxVerifyResult", "ScheduledOperation", "SimulationTrace", "StorageEfficiencyLog", "SybilAssessment", "ThreatAdvisory", "ThreatComment", "ThreatReview", "TimerAlert", "TipSubscription", "Token", "Transaction", "TrustPath", "VerifiedIdentityLink", "VestingSchedule", "VulnerabilitySource", "WebhookSubscription", "ZodFlattenedError", "ZodValidationError"]
 
 AnonymitySetSnapshot = TypedDict(
     "AnonymitySetSnapshot",
@@ -15,6 +15,102 @@ AnonymitySetSnapshot = TypedDict(
         "protocol": Literal["SHIELDED_TRANSFER", "ZK_SNARK", "ZK_STARK", "BULLETPROOF", "STEALTH_ADDRESS", "MIXER", "PRIVATE_VOTING", "OFF_CHAIN_DATA", "ENCRYPTED_STATE", "DIFFERENTIAL_PRIVACY"],
         "setSize": int,
         "timestamp": str,
+    },
+    total=False,
+)
+
+ComposabilityExploit = TypedDict(
+    "ComposabilityExploit",
+    {
+        "discoveredAt": str,
+        "id": str,
+        "patternCategory": str,
+        "severity": str,
+        "title": str,
+    },
+    total=False,
+)
+
+ComposabilityFuzzCampaign = TypedDict(
+    "ComposabilityFuzzCampaign",
+    {
+        "completedAt": str,
+        "contractAddress": str,
+        "coveragePct": float,
+        "findings": List[Dict[str, object]],
+        "id": str,
+        "status": str,
+        "totalCases": int,
+        "unsafeFound": int,
+    },
+    total=False,
+)
+
+ComposabilityStaticAnalysis = TypedDict(
+    "ComposabilityStaticAnalysis",
+    {
+        "analysisVersion": str,
+        "analyzedAt": str,
+        "contractAddress": str,
+        "hasUnboundedRecursion": bool,
+        "id": str,
+        "maxCallDepth": int,
+    },
+    total=False,
+)
+
+ComposabilityVerification = TypedDict(
+    "ComposabilityVerification",
+    {
+        "atomicity": bool,
+        "createdAt": str,
+        "id": str,
+        "reentrancyFree": bool,
+        "totalScore": float,
+        "txHash": str,
+        "verified": bool,
+    },
+    total=False,
+)
+
+ComposedTransaction = TypedDict(
+    "ComposedTransaction",
+    {
+        "analysisStatus": str,
+        "createdAt": str,
+        "id": str,
+        "ledgerSeq": int,
+        "patterns": List["CompositionPattern"],
+        "riskLevel": str,
+        "safetyScore": float,
+        "txHash": str,
+    },
+    total=False,
+)
+
+CompositionAlert = TypedDict(
+    "CompositionAlert",
+    {
+        "contractAddress": str,
+        "createdAt": str,
+        "id": str,
+        "patternId": str,
+        "severity": str,
+    },
+    total=False,
+)
+
+CompositionPattern = TypedDict(
+    "CompositionPattern",
+    {
+        "category": str,
+        "createdAt": str,
+        "id": str,
+        "instances": List[Dict[str, object]],
+        "mitigationGuide": Optional[str],
+        "name": str,
+        "riskRating": str,
+        "updatedAt": str,
     },
     total=False,
 )
@@ -36,6 +132,21 @@ Contract = TypedDict(
         "tokenSymbol": Optional[str],
         "updatedAt": str,
         "wasmHash": Optional[str],
+    },
+    total=False,
+)
+
+ContractComposabilityProfile = TypedDict(
+    "ContractComposabilityProfile",
+    {
+        "compositionCount": int,
+        "contractAddress": str,
+        "id": str,
+        "lastAnalyzed": str,
+        "riskIncidents": int,
+        "safetyScoreAvg": float,
+        "uniqueCallees": int,
+        "uniqueCallers": int,
     },
     total=False,
 )
@@ -89,6 +200,22 @@ DeAnonymizationFinding = TypedDict(
         "sourceTx": str,
         "targetAddress": str,
         "technique": str,
+    },
+    total=False,
+)
+
+EcosystemComposabilityIndex = TypedDict(
+    "EcosystemComposabilityIndex",
+    {
+        "avgSafetyScore": float,
+        "compositionDiversity": int,
+        "computedAt": str,
+        "exploitIncidentRate": float,
+        "id": str,
+        "protocolInterconnectivity": float,
+        "score": float,
+        "totalComposedTx": int,
+        "totalContracts": int,
     },
     total=False,
 )

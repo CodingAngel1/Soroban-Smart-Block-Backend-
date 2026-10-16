@@ -223,28 +223,22 @@ export function parseInvokeHostFunction(envelopeXdr: string): ParsedInvokeHostFu
 }
 
 /**
- * Parse a base64 XDR transaction result to extract the return value of an
- * InvokeHostFunction operation.
+ * Parse base64 TransactionMeta XDR and extract Soroban host-function return
+ * data. TransactionResult contains only a hash of the return-value preimage;
+ * the decoded ScVal is carried by SorobanTransactionMeta in TransactionMeta V3.
  */
-export function parseInvokeResult(resultXdr: string): ParsedResult | null {
-  let txResult: xdr.TransactionResult;
+export function parseInvokeResult(transactionMetaXdr: string): ParsedResult | null {
+  let txMeta: xdr.TransactionMeta;
   try {
-    txResult = xdr.TransactionResult.fromXDR(resultXdr, 'base64');
+    txMeta = xdr.TransactionMeta.fromXDR(transactionMetaXdr, 'base64');
   } catch {
     return null;
   }
 
-  const results: xdr.OperationResult[] = txResult.result().results() ?? [];
-  const invokeResult = results.find(
-    (r: xdr.OperationResult) => r.tr?.()?.switch().name === 'invokeHostFunction',
-  );
-  if (!invokeResult) return null;
+  if (txMeta.switch() !== 3) return null;
 
-  const invokeHostFnResult = invokeResult.tr().invokeHostFunctionResult();
-  if (invokeHostFnResult.switch().name !== 'invokeHostFunctionSuccess') return null;
-
-  const scVal = xdr.ScVal.fromXDR(invokeHostFnResult.success());
-  return scValToJson(scVal);
+  const sorobanMeta = txMeta.v3().sorobanMeta();
+  return sorobanMeta ? scValToJson(sorobanMeta.returnValue()) : null;
 }
 
 // ── CAP-0079 address translation re-export ────────────────────────────────────

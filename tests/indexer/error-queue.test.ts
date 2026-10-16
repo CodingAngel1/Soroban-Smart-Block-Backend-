@@ -26,10 +26,13 @@ vi.mock('../../src/db', () => {
       deadLetterItem: {
         create: mockDeadCreate,
         count: mockDeadCount,
+        findFirst: vi.fn().mockResolvedValue(null),
       },
     },
   };
 });
+
+vi.mock('../../src/config', () => ({ config: { stellarNetwork: 'testnet' } }));
 
 import { enqueueFailure, retryFailures } from '../../src/indexer/errorQueue';
 import { prismaWrite } from '../../src/db';

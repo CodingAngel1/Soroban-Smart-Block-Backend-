@@ -3,6 +3,7 @@ import { realtimeHub } from '../realtime/eventHub';
 import { xdr } from '@stellar/stellar-sdk';
 import { prismaRead, prismaWrite, prismaWrite as prisma } from '../db';
 import { config } from '../config';
+import { recordIndexerFreshness } from './freshness';
 import {
   indexerPipelineStageDuration,
   indexerPipelineStageLag,
@@ -26,6 +27,7 @@ import { dispatchWebhooks } from '../webhooks/dispatcher';
 import { enqueueInitialAudit } from './audit-pipeline';
 import { amIResponsibleFor, getRangeCursor, isP2pEnabled, setRangeCursor } from '../p2p';
 import { logger } from '../logger';
+import { withSpan } from '../tracer';
 import { uuidv7 } from '../utils/uuidv7';
 import { startSavedSearchScheduler, stopSavedSearchScheduler } from './savedSearchRunner';
 import {
@@ -34,10 +36,55 @@ import {
   indexTransaction,
   indexSafely,
 } from '../services/search/full-text-search';
-import { commitCatchUpCheckpoint } from './checkpoint';
+import { processCheckpointedRange, type CatchUpCheckpointStore } from './catch-up';
+import { getIndexerPauseState } from './worker-control';
 
 const BATCH = config.indexerBatchSize;
 const WORKERS = config.indexerCatchupWorkers;
+const CHECKPOINT_WINDOW_SIZE = 100;
+
+const catchUpCheckpointStore: CatchUpCheckpointStore = {
+  async findUnique({ where: { network_rangeStart_rangeEnd: key } }) {
+    const rows = await prismaWrite.$queryRaw<
+      Array<{
+        lastCommittedLedger: number | null;
+        completed: boolean;
+      }>
+    >`
+      SELECT "last_committed_ledger" AS "lastCommittedLedger", "completed"
+      FROM "_catch_up_checkpoints"
+      WHERE "network" = ${key.network}
+        AND "range_start" = ${key.rangeStart}
+        AND "range_end" = ${key.rangeEnd}
+      LIMIT 1
+    `;
+    return rows[0] ?? null;
+  },
+  async upsert({ where: { network_rangeStart_rangeEnd: key }, create, update }) {
+    await prismaWrite.$executeRaw`
+      INSERT INTO "_catch_up_checkpoints"
+        ("id", "network", "range_start", "range_end", "last_committed_ledger", "completed", "updated_at", "created_at")
+      VALUES
+        (${create.id}, ${key.network}, ${key.rangeStart}, ${key.rangeEnd}, ${update.lastCommittedLedger}, ${update.completed}, NOW(), NOW())
+      ON CONFLICT ("network", "range_start", "range_end")
+      DO UPDATE SET
+        "last_committed_ledger" = EXCLUDED."last_committed_ledger",
+        "completed" = EXCLUDED."completed",
+        "updated_at" = NOW()
+    `;
+  },
+};
+
+function withIndexerSpan<T>(
+  name: string,
+  attributes: Record<string, string | number | boolean>,
+  operation: () => PromiseLike<T> | T,
+): Promise<T> {
+  return withSpan(name, async (span) => {
+    span.setAttributes({ ...attributes, 'network.name': config.profile.name });
+    return await operation();
+  });
+}
 
 // ---------------------------------------------------------------------------
 // IndexerState helpers & High Availability (HA) Leader Election
@@ -76,6 +123,7 @@ export async function setLastIndexedLedger(
 ): Promise<void> {
   if (isP2pEnabled()) {
     await setRangeCursor(ledger, ledger);
+    await refreshIndexerFreshness(ledger, network);
     return;
   }
 
@@ -93,6 +141,7 @@ export async function setLastIndexedLedger(
         version: 1,
       },
     });
+    await refreshIndexerFreshness(ledger, network);
     return;
   }
 
@@ -118,6 +167,29 @@ export async function setLastIndexedLedger(
       where: { network, id: 'singleton' },
       data: { lastLedger: ledger, version: { increment: 1 } },
     });
+  }
+
+  await refreshIndexerFreshness(ledger, network);
+}
+
+async function refreshIndexerFreshness(ledger: number, network: string): Promise<void> {
+  try {
+    const indexedLedger = await prismaWrite.ledger.findUnique({
+      where: { sequence: ledger },
+      select: { closeTime: true },
+    });
+    if (!indexedLedger) {
+      logger.warn(`[indexer] freshness metrics not updated: ledger ${ledger} is not persisted`);
+      return;
+    }
+
+    const networkTip = await getLatestLedger().catch((error: unknown): undefined => {
+      logger.warn('[indexer] unable to refresh ledger-lag metric from RPC', { error });
+      return undefined;
+    });
+    recordIndexerFreshness(network, ledger, indexedLedger.closeTime, networkTip);
+  } catch (error) {
+    logger.warn('[indexer] unable to refresh indexer freshness metrics', { error });
   }
 }
 
@@ -246,17 +318,23 @@ export async function processLedgerRange(
   start: number,
   end: number,
   opts: { force?: boolean } = {},
-): Promise<{
-  network: string;
-  ledgerSequences: number[];
-  transactionHashes: string[];
-  eventIds: string[];
-}> {
-  logger.info(`Indexing ledgers ${start} → ${end}`);
-  const network = getActiveNetwork();
-  const indexedLedgerSequences: number[] = [];
-  const indexedTransactionHashes = new Set<string>();
-  const indexedEventIds = new Set<string>();
+): Promise<void> {
+  return withIndexerSpan(
+    'indexer.ledger_range',
+    { 'ledger.range.start': start, 'ledger.range.end': end },
+    () => processLedgerRangeInternal(start, end, opts),
+  );
+}
+
+async function processLedgerRangeInternal(
+  start: number,
+  end: number,
+  opts: { force?: boolean },
+): Promise<void> {
+  logger.info(`Indexing ledgers ${start} → ${end}`, {
+    ledgerSequence: start,
+    ledgerRangeEnd: end,
+  });
 
   // Stage lag metrics update
   try {
@@ -282,10 +360,18 @@ export async function processLedgerRange(
       responsibleSeqs.push(seq);
     }
   }
-  const prefetchedMeta = await fetchLedgerMetadataBatch(responsibleSeqs);
+  const prefetchedMeta = await withIndexerSpan(
+    'indexer.ledger.fetch_metadata',
+    { 'ledger.range.start': start, 'ledger.range.end': end },
+    () => fetchLedgerMetadataBatch(responsibleSeqs),
+  );
 
   for (const seq of responsibleSeqs) {
-    const ledgerMeta = prefetchedMeta.get(seq) ?? (await fetchLedgerMetadata(seq));
+    const ledgerMeta =
+      prefetchedMeta.get(seq) ??
+      (await withIndexerSpan('indexer.ledger.fetch_metadata', { 'ledger.sequence': seq }, () =>
+        fetchLedgerMetadata(seq),
+      ));
 
     // Deep Reorg Check & Extended Backtracking
     const prevSeq = seq - 1;
@@ -296,6 +382,7 @@ export async function processLedgerRange(
     if (prevLedger && prevLedger.hash !== ledgerMeta.previousLedgerHash) {
       logger.warn(
         `🚨 REORG DETECTED at ledger ${seq}! Local hash ${prevLedger.hash} vs network expected ${ledgerMeta.previousLedgerHash}`,
+        { ledgerSequence: seq },
       );
 
       const maxDepth = config.indexerReorgProtectionDepth || 100;
@@ -319,7 +406,7 @@ export async function processLedgerRange(
         } catch (e) {
           logger.error(
             `Failed to fetch remote metadata for deep reorg check at ledger ${checkSeq}`,
-            e,
+            { ledgerSequence: checkSeq, error: e },
           );
           break;
         }
@@ -327,7 +414,9 @@ export async function processLedgerRange(
         if (localCheckLedger.hash === remoteCheckMeta.hash) {
           commonAncestorFound = true;
           commonAncestorSeq = checkSeq;
-          logger.info(`Found common ancestor at ledger sequence ${checkSeq} (depth: ${depth})`);
+          logger.info(`Found common ancestor at ledger sequence ${checkSeq} (depth: ${depth})`, {
+            ledgerSequence: checkSeq,
+          });
           break;
         } else {
           rolledBackSequences.push(checkSeq);
@@ -337,6 +426,7 @@ export async function processLedgerRange(
       if (!commonAncestorFound) {
         logger.error(
           `🚨 DEEP REORG EXCEEDS SAFETY THRESHOLD (${maxDepth} ledgers). Performing safety rollback for ${rolledBackSequences.length} ledgers.`,
+          { ledgerSequence: seq },
         );
       }
 
@@ -361,24 +451,24 @@ export async function processLedgerRange(
 
     // Persist Ledger record
     const stopPersistLedgerTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
-    await prismaWrite.ledger.upsert({
-      where: { network_sequence: { network, sequence: seq } },
-      update: {
-        hash: ledgerMeta.hash,
-        previousLedgerHash: ledgerMeta.previousLedgerHash,
-        closeTime: ledgerMeta.closeTime,
-        txCount: ledgerMeta.txCount,
-      },
-      create: {
-        network,
-        sequence: seq,
-        hash: ledgerMeta.hash,
-        previousLedgerHash: ledgerMeta.previousLedgerHash,
-        closeTime: ledgerMeta.closeTime,
-        txCount: ledgerMeta.txCount,
-      },
-    });
-    indexedLedgerSequences.push(seq);
+    await withIndexerSpan('indexer.ledger.persist', { 'ledger.sequence': seq }, () =>
+      prismaWrite.ledger.upsert({
+        where: { sequence: seq },
+        update: {
+          hash: ledgerMeta.hash,
+          previousLedgerHash: ledgerMeta.previousLedgerHash,
+          closeTime: ledgerMeta.closeTime,
+          txCount: ledgerMeta.txCount,
+        },
+        create: {
+          sequence: seq,
+          hash: ledgerMeta.hash,
+          previousLedgerHash: ledgerMeta.previousLedgerHash,
+          closeTime: ledgerMeta.closeTime,
+          txCount: ledgerMeta.txCount,
+        },
+      }),
+    );
     stopPersistLedgerTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
     realtimeHub.publishLedger({
@@ -395,7 +485,11 @@ export async function processLedgerRange(
 
   // Stage 2 & 3: FETCH events & DECODE / PERSIST / ENRICH events and transactions
   const stopEventsFetchTimer = indexerPipelineStageDuration.startTimer({ stage: 'fetch' });
-  const events = await fetchEvents(start, end);
+  const events = await withIndexerSpan(
+    'indexer.events.fetch',
+    { 'ledger.range.start': start, 'ledger.range.end': end },
+    () => fetchEvents(start, end),
+  );
   stopEventsFetchTimer();
   const legacyEventIds = events.map(
     (event, index) =>
@@ -426,11 +520,16 @@ export async function processLedgerRange(
       pagingToken: event.pagingToken,
     });
     const stopPersistContractTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
-    const contract = await prismaWrite.contract.upsert({
-      where: { address: event.contractId },
-      update: {},
-      create: { address: event.contractId },
-    });
+    const contract = await withIndexerSpan(
+      'indexer.contract.persist',
+      { 'ledger.sequence': event.ledgerSequence },
+      () =>
+        prismaWrite.contract.upsert({
+          where: { address: event.contractId },
+          update: {},
+          create: { address: event.contractId },
+        }),
+    );
     stopPersistContractTimer();
 
     if (!indexedContracts.has(event.contractId)) {
@@ -453,12 +552,21 @@ export async function processLedgerRange(
     if (!existingTx) {
       // Decode Stage
       const stopDecodeTxTimer = indexerPipelineStageDuration.startTimer({ stage: 'decode' });
-      const txResult = await getTransaction(event.transactionHash).catch(() =>
-        getTransactionFromHorizon(event.transactionHash).catch((): null => null),
+      const txResult = await withIndexerSpan(
+        'indexer.transaction.fetch',
+        { 'ledger.sequence': event.ledgerSequence },
+        () =>
+          getTransaction(event.transactionHash).catch(() =>
+            getTransactionFromHorizon(event.transactionHash).catch((): null => null),
+          ),
       );
       const rawXdr = (txResult as any)?.envelopeXdr?.toXDR('base64') ?? '';
       const decoded = rawXdr
-        ? await decodeTransaction(rawXdr)
+        ? await withIndexerSpan(
+            'indexer.transaction.decode',
+            { 'ledger.sequence': event.ledgerSequence },
+            () => decodeTransaction(rawXdr),
+          )
         : {
             contractAddress: event.contractId,
             functionName: null,
@@ -470,27 +578,29 @@ export async function processLedgerRange(
 
       // Persist Stage
       const stopPersistTxTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
-      const transaction = await prismaWrite.transaction.upsert({
-        where: {
-          network_hash: { network, hash: event.transactionHash },
-        },
-        update: {},
-        create: {
-          id: uuidv7(),
-          hash: event.transactionHash,
-          network,
-          ledgerSequence: event.ledgerSequence,
-          ledgerCloseTime: event.ledgerCloseTime,
-          sourceAccount: (txResult as any)?.sourceAccount ?? 'unknown',
-          contractAddress: decoded.contractAddress,
-          functionName: decoded.functionName,
-          functionArgs: (decoded.functionArgs as object) ?? undefined,
-          rawXdr,
-          status: (txResult as any)?.status === 'SUCCESS' ? 'success' : 'failed',
-          humanReadable: decoded.humanReadable,
-          feeCharged: String((txResult as any)?.feeCharged ?? ''),
-        },
-      });
+      const transaction = await withIndexerSpan(
+        'indexer.transaction.persist',
+        { 'ledger.sequence': event.ledgerSequence },
+        () =>
+          prismaWrite.transaction.upsert({
+            where: { hash: event.transactionHash },
+            update: {},
+            create: {
+              id: uuidv7(),
+              hash: event.transactionHash,
+              ledgerSequence: event.ledgerSequence,
+              ledgerCloseTime: event.ledgerCloseTime,
+              sourceAccount: (txResult as any)?.sourceAccount ?? 'unknown',
+              contractAddress: decoded.contractAddress,
+              functionName: decoded.functionName,
+              functionArgs: (decoded.functionArgs as object) ?? undefined,
+              rawXdr,
+              status: (txResult as any)?.status === 'SUCCESS' ? 'success' : 'failed',
+              humanReadable: decoded.humanReadable,
+              feeCharged: String((txResult as any)?.feeCharged ?? ''),
+            },
+          }),
+      );
       stopPersistTxTimer();
       indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
 
@@ -549,7 +659,11 @@ export async function processLedgerRange(
 
     // Decode & Persist Event
     const stopDecodeEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'decode' });
-    const { eventType, decoded } = decodeEvent(event.topics, event.data);
+    const { eventType, decoded } = await withIndexerSpan(
+      'indexer.event.decode',
+      { 'ledger.sequence': event.ledgerSequence },
+      async () => decodeEvent(event.topics, event.data),
+    );
     stopDecodeEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'decode', status: 'success' });
 
@@ -561,23 +675,26 @@ export async function processLedgerRange(
         : `${network}-${legacyEventId}`;
 
     const stopPersistEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
-    const savedEvent = await prismaWrite.event.upsert({
-      where: { id: eventId },
-      update: {},
-      create: {
-        id: eventId,
-        transactionHash: event.transactionHash,
-        network,
-        contractAddress: event.contractId,
-        eventType,
-        topics: event.topics,
-        data: { raw: event.data },
-        decoded: decoded as object,
-        ledgerSequence: event.ledgerSequence,
-        ledgerCloseTime: event.ledgerCloseTime,
-      },
-    });
-    indexedEventIds.add(savedEvent.id);
+    const savedEvent = await withIndexerSpan(
+      'indexer.event.persist',
+      { 'ledger.sequence': event.ledgerSequence },
+      () =>
+        prismaWrite.event.upsert({
+          where: { id: eventId },
+          update: {},
+          create: {
+            id: eventId,
+            transactionHash: event.transactionHash,
+            contractAddress: event.contractId,
+            eventType,
+            topics: event.topics,
+            data: { raw: event.data },
+            decoded: decoded as object,
+            ledgerSequence: event.ledgerSequence,
+            ledgerCloseTime: event.ledgerCloseTime,
+          },
+        }),
+    );
     stopPersistEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
 
@@ -624,120 +741,55 @@ export async function indexSingleLedger(ledgerSeq: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Parallel catch-up with per-batch checkpointing (issue #881)
+// Parallel catch-up with durable per-batch checkpointing
 // ---------------------------------------------------------------------------
 
 /**
- * Split [from, to] into at most `n` equal-sized chunks.
- */
-function chunkRange(from: number, to: number, n: number): Array<[number, number]> {
-  const total = to - from + 1;
-  const size = Math.ceil(total / n);
-  const chunks: Array<[number, number]> = [];
-  for (let start = from; start <= to; start += size) {
-    chunks.push([start, Math.min(start + size - 1, to)]);
-  }
-  return chunks;
-}
-
-/**
- * Look up the resume cursor for a chunk from a persisted checkpoint.
- * Returns the last committed ledger + 1 (i.e. where to resume from), or
- * `rangeStart` if no checkpoint exists yet.
- */
-async function getChunkResumeCursor(
-  rangeStart: number,
-  rangeEnd: number,
-  network: string,
-): Promise<number> {
-  const row = await prismaWrite.catchUpCheckpoint.findUnique({
-    where: { network_rangeStart_rangeEnd: { network, rangeStart, rangeEnd } },
-    select: { lastCommittedLedger: true, completed: true },
-  });
-  if (!row) return rangeStart;
-  if (row.completed) {
-    logger.info(`[catch-up] chunk ${rangeStart}-${rangeEnd} already completed — skipping`);
-    return rangeEnd + 1; // signals "nothing to do"
-  }
-  if (row.lastCommittedLedger !== null) {
-    const resume = row.lastCommittedLedger + 1;
-    if (resume <= rangeEnd) {
-      logger.info(
-        `[catch-up] resuming chunk ${rangeStart}-${rangeEnd} from ledger ${resume} ` +
-          `(last committed: ${row.lastCommittedLedger})`,
-      );
-      return resume;
-    }
-  }
-  return rangeStart;
-}
-
-/**
- * Process a single worker chunk [rangeStart, rangeEnd] with intra-chunk
- * checkpointing every BATCH ledgers.
+ * Run parallel workers over fixed, network-scoped checkpoint windows. Stable
+ * boundaries let a later catch-up with a different target resume the same
+ * work, while a failed checkpoint write stops cursor advancement.
  *
- * After each BATCH-ledger sub-range completes, the progress is persisted to
- * CatchUpCheckpoint.  On crash-restart `getChunkResumeCursor` picks up the
- * last committed position so at most BATCH ledgers are re-processed.
+ * Database upserts use deterministic transaction/event keys, so a crash
+ * between persistence and checkpointing can safely replay the last batch.
  */
-async function processChunkWithCheckpointing(rangeStart: number, rangeEnd: number): Promise<void> {
-  const network = getActiveNetwork();
-  // Resume from last checkpoint rather than rangeStart
-  const resumeFrom = await getChunkResumeCursor(rangeStart, rangeEnd, network);
-  if (resumeFrom > rangeEnd) {
-    // Chunk already completed in a previous run
-    return;
+async function catchUp(from: number, to: number): Promise<boolean> {
+  const firstWindow = Math.floor((from - 1) / CHECKPOINT_WINDOW_SIZE) * CHECKPOINT_WINDOW_SIZE + 1;
+  const windows: Array<[number, number, number, number]> = [];
+  for (let windowStart = firstWindow; windowStart <= to; windowStart += CHECKPOINT_WINDOW_SIZE) {
+    const windowEnd = windowStart + CHECKPOINT_WINDOW_SIZE - 1;
+    windows.push([windowStart, windowEnd, Math.max(from, windowStart), Math.min(to, windowEnd)]);
   }
+  logger.info(`[catch-up] ${windows.length} checkpoint window(s) covering ledgers ${from}–${to}`);
 
-  // Write an initial "in-progress" checkpoint so a crash before the first
-  // sub-batch flush is also detectable (lastCommittedLedger = null means
-  // "started but nothing committed yet").
-  await commitCatchUpCheckpoint(
-    rangeStart,
-    rangeEnd,
-    network,
-    resumeFrom > rangeStart ? resumeFrom - 1 : null,
-    false,
+  const concurrency = Math.max(1, WORKERS);
+  const workerResults = await Promise.all(
+    Array.from({ length: Math.min(concurrency, windows.length) }, async (_, worker) => {
+      let complete = true;
+      for (let index = worker; index < windows.length; index += concurrency) {
+        const [rangeStart, rangeEnd, workStart, workEnd] = windows[index];
+        complete =
+          (await processCheckpointedRange({
+            network: getActiveNetwork(),
+            rangeStart,
+            rangeEnd,
+            workStart,
+            workEnd,
+            batchSize: BATCH,
+            store: catchUpCheckpointStore,
+            processRange: processLedgerRange,
+            isPaused: async () => (await getIndexerPauseState()).paused,
+          })) && complete;
+        if (!complete) return false;
+      }
+      return complete;
+    }),
   );
-
-  // Process in BATCH-sized sub-ranges, persisting progress after each one
-  for (let subStart = resumeFrom; subStart <= rangeEnd; subStart += BATCH) {
-    const subEnd = Math.min(subStart + BATCH - 1, rangeEnd);
-    const indexedRecords = await processLedgerRange(subStart, subEnd);
-    // Commit progress only after a transaction confirms the indexed rows exist.
-    await commitCatchUpCheckpoint(
-      rangeStart,
-      rangeEnd,
-      network,
-      subEnd,
-      subEnd >= rangeEnd,
-      indexedRecords,
-    );
-    logger.debug(
-      `[catch-up] checkpoint flushed for chunk ${rangeStart}-${rangeEnd}: committed ${subEnd}`,
-    );
+  if (workerResults.some((complete) => !complete) || (await getIndexerPauseState()).paused) {
+    return false;
   }
-}
-
-/**
- * Run parallel workers over [from, to], then advance IndexerState to `to`.
- * Workers process non-overlapping chunks concurrently, each with its own
- * intra-chunk checkpoint.  The global cursor write is serialised after all
- * workers succeed so a partial failure leaves the cursor unchanged and the
- * whole round retries safely (upserts are idempotent).
- *
- * On restart after a crash, each worker resumes from its last persisted
- * CatchUpCheckpoint rather than re-fetching from the chunk start.
- */
-async function catchUp(from: number, to: number): Promise<void> {
-  const chunks = chunkRange(from, to, WORKERS);
-  logger.info(
-    `[catch-up] ${chunks.length} worker(s) covering ledgers ${from}–${to} ` +
-      `(chunk size ~${chunks[0][1] - chunks[0][0] + 1})`,
-  );
-  await Promise.all(chunks.map(([s, e]) => processChunkWithCheckpointing(s, e)));
   await setLastIndexedLedger(to);
   logger.info(`[catch-up] done — cursor advanced to ${to}`);
+  return true;
 }
 
 async function processSessionAuthorization(
@@ -885,6 +937,7 @@ function sleep(ms: number) {
 }
 
 let currentWorker: SorobanEventWorker | null = null;
+let currentWorkerTask: Promise<void> | null = null;
 
 export async function runIndexer() {
   await startIndexerService();
@@ -893,17 +946,20 @@ export async function runIndexer() {
 export async function startIndexerService() {
   const worker = new SorobanEventWorker();
   currentWorker = worker;
-  await worker.start();
   // Match newly indexed contracts/events against stored saved searches (#966).
   startSavedSearchScheduler();
+  currentWorkerTask = worker.start();
+  await currentWorkerTask;
 }
 
-export function stopIndexerService(): void {
+export async function stopIndexerService(): Promise<void> {
   stopSavedSearchScheduler();
   if (currentWorker) {
     currentWorker.stop();
-    currentWorker = null;
   }
+  await currentWorkerTask;
+  currentWorker = null;
+  currentWorkerTask = null;
 }
 
 export class SorobanEventWorker {
@@ -930,6 +986,10 @@ export class SorobanEventWorker {
 
     while (!this.shouldStop) {
       try {
+        if ((await getIndexerPauseState()).paused) {
+          await sleep(config.indexerPollIntervalMs);
+          continue;
+        }
         if (this.isProcessing) {
           await sleep(config.indexerPollIntervalMs);
           continue;
@@ -950,6 +1010,7 @@ export class SorobanEventWorker {
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        if ((await getIndexerPauseState()).paused) return;
         const last = await getLastIndexedLedger();
         if (last >= targetLedger) return;
 
@@ -973,8 +1034,8 @@ export class SorobanEventWorker {
           // Attempt to backfill the gap
           try {
             logger.info(`🔄 Attempting to backfill gap ${gapStart} → ${gapEnd}...`);
-            if (gapEnd - gapStart >= BATCH && WORKERS > 1) {
-              await catchUp(gapStart, gapEnd);
+            if (gapEnd - gapStart >= BATCH) {
+              if (!(await catchUp(gapStart, gapEnd))) return;
             } else {
               await processLedgerRange(gapStart, gapEnd);
               await setLastIndexedLedger(gapEnd);
@@ -1002,8 +1063,8 @@ export class SorobanEventWorker {
         }
 
         const gap = targetLedger - last;
-        if (gap > BATCH && WORKERS > 1) {
-          await catchUp(last + 1, targetLedger);
+        if (gap > BATCH) {
+          if (!(await catchUp(last + 1, targetLedger))) return;
           return;
         }
 

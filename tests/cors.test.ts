@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import express from 'express';
 import cors from 'cors';
 import request from 'supertest';
+import { CORS_ALLOWED_HEADERS, CORS_EXPOSED_HEADERS } from '../src/middleware/corsHeaders';
 
 function buildApp(corsAllowedOrigins?: string, nodeEnv = 'development') {
   const app = express();
@@ -17,7 +18,8 @@ function buildApp(corsAllowedOrigins?: string, nodeEnv = 'development') {
     cors({
       origin: corsOrigin,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Api-Key', 'X-Request-Id'],
+      allowedHeaders: CORS_ALLOWED_HEADERS,
+      exposedHeaders: CORS_EXPOSED_HEADERS,
       credentials: true,
     }),
   );
@@ -92,6 +94,26 @@ describe('CORS — explicit origin allowlist', () => {
     const app = buildApp(allowlist, 'production');
     const res = await request(app).get('/ping').set('Origin', 'https://app.stellar.org');
     expect(res.headers['access-control-allow-credentials']).toBe('true');
+  });
+
+  it('exposes request and rate-limit headers to browser clients', async () => {
+    const app = buildApp(allowlist, 'production');
+    const res = await request(app).get('/ping').set('Origin', 'https://app.stellar.org');
+    const exposed = res.headers['access-control-expose-headers'].toLowerCase();
+
+    for (const header of [
+      'x-request-id',
+      'x-ratelimit-limit',
+      'x-ratelimit-remaining',
+      'x-ratelimit-reset',
+      'x-ratelimit-tier',
+      'x-ratelimit-policy',
+      'x-ratelimit-warn',
+      'x-ratelimit-predicted',
+      'retry-after',
+    ]) {
+      expect(exposed).toContain(header);
+    }
   });
 
   it('allows all configured methods in preflight', async () => {
