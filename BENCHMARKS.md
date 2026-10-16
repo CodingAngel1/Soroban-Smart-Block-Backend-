@@ -105,9 +105,7 @@ npm run bench:compare
 Compares current results against the most recent baseline and generates a report:
 
 ```
-==================================================
 EVENT-DECODING BENCHMARKS
-==================================================
 
 # Performance Benchmark Report
 
