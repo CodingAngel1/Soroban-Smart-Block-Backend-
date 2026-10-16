@@ -151,7 +151,7 @@ export function getRateLimitTier(
 }
 
 function getTierFromEnvKey(apiKey: string | undefined): RateLimitTier {
-  if (!apiKey) return 'free';
+  if (!apiKey) return 'unauthenticated';
   const hashed = hashApiKey(apiKey);
   if (premiumKeys.has(hashed)) return 'pro';
   if (developerKeys.has(hashed)) return 'developer';
@@ -409,7 +409,7 @@ export async function tieredRateLimit(
   const tier: RateLimitTier = keyCtx?.tier ?? getTierFromEnvKey(rawKey);
   const clientKey = keyCtx?.id ?? req.ip ?? 'anonymous';
 
-  if (useTokenBucket) {
+  if (useTokenBucket || tier === 'unauthenticated') {
     try {
       const result: TokenBucketResult = await checkTokenBucket(
         clientKey,
@@ -447,6 +447,10 @@ export async function tieredRateLimit(
       return;
     } catch (err) {
       logger.warn(`[rate-limit] Token bucket error, falling through: ${String(err)}`);
+      if (tier === 'unauthenticated') {
+        next(err);
+        return;
+      }
     }
   }
 

@@ -5,10 +5,64 @@
 from typing import Dict
 
 SPEC_VERSION = "1.0.0"
-SPEC_FINGERPRINT = "e92010e2f69aeeee"
-OPERATION_COUNT = 494
+SPEC_FINGERPRINT = "5fc6b3bd018fca34"
+OPERATION_COUNT = 506
 
 OPERATIONS: Dict[str, Dict[str, object]] = {
+    "getAdminContractAbiSubmissions": {
+        "method": "GET",
+        "path": "/admin/contract-abi-submissions",
+        "path_params": (),
+        "query": ({
+            "name": "limit",
+            "type": "integer",
+            "required": False,
+            "minimum": 1,
+            "maximum": 100,
+        }, {
+            "name": "page",
+            "type": "integer",
+            "required": False,
+            "minimum": 1,
+        }, {
+            "name": "status",
+            "type": "string",
+            "required": False,
+            "enum": ("pending", "approved", "rejected", "published",),
+        },),
+        "body": "none",
+        "deprecated": False,
+        "summary": "List contract ABI submissions for moderation",
+    },
+    "postAdminContractAbiSubmissionsByIdApprove": {
+        "method": "POST",
+        "path": "/admin/contract-abi-submissions/{id}/approve",
+        "path_params": ("id",),
+        "query": (),
+        "body": "optional",
+        "content_type": "application/json",
+        "deprecated": False,
+        "summary": "Approve a pending contract ABI submission",
+    },
+    "postAdminContractAbiSubmissionsByIdPublish": {
+        "method": "POST",
+        "path": "/admin/contract-abi-submissions/{id}/publish",
+        "path_params": ("id",),
+        "query": (),
+        "body": "none",
+        "deprecated": False,
+        "summary": "Publish an approved ABI into the contract registry",
+    },
+    "postAdminContractAbiSubmissionsByIdReject": {
+        "method": "POST",
+        "path": "/admin/contract-abi-submissions/{id}/reject",
+        "path_params": ("id",),
+        "query": (),
+        "body": "required",
+        "content_type": "application/json",
+        "deprecated": False,
+        "summary": "Reject a pending contract ABI submission",
+    },
     "getAdvancedEvents": {
         "method": "GET",
         "path": "/advanced-events",
@@ -666,6 +720,24 @@ OPERATIONS: Dict[str, Dict[str, object]] = {
         "deprecated": False,
         "summary": "Verify source code matches a deployed contract's WASM hash",
     },
+    "getComplianceTokenLabelsByTokenId": {
+        "method": "GET",
+        "path": "/compliance/token-labels/{tokenId}",
+        "path_params": ("tokenId",),
+        "query": (),
+        "body": "none",
+        "deprecated": False,
+        "summary": "Accreditation and risk labels for a token, with reasons",
+    },
+    "putComplianceTokenLabelsByTokenId": {
+        "method": "PUT",
+        "path": "/compliance/token-labels/{tokenId}",
+        "path_params": ("tokenId",),
+        "query": (),
+        "body": "none",
+        "deprecated": False,
+        "summary": "Upsert a label (admin). One label per kind+code+source.",
+    },
     "postComposabilityAlerts": {
         "method": "POST",
         "path": "/composability/alerts",
@@ -999,6 +1071,43 @@ OPERATIONS: Dict[str, Dict[str, object]] = {
         "deprecated": False,
         "summary": "Register or update contract ABI metadata",
     },
+    "postContractsAbiSubmissions": {
+        "method": "POST",
+        "path": "/contracts/abi-submissions",
+        "path_params": (),
+        "query": (),
+        "body": "required",
+        "content_type": "application/json",
+        "deprecated": False,
+        "summary": "Submit contract ABI metadata for moderation",
+    },
+    "getContractsLicenses": {
+        "method": "GET",
+        "path": "/contracts/licenses",
+        "path_params": (),
+        "query": (),
+        "body": "none",
+        "deprecated": False,
+        "summary": "Search registered contract licenses (?license=MIT&limit=20)",
+    },
+    "getContractsLicensesByContractId": {
+        "method": "GET",
+        "path": "/contracts/licenses/{contractId}",
+        "path_params": ("contractId",),
+        "query": (),
+        "body": "none",
+        "deprecated": False,
+        "summary": "License and attribution for a contract",
+    },
+    "putContractsLicensesByContractId": {
+        "method": "PUT",
+        "path": "/contracts/licenses/{contractId}",
+        "path_params": ("contractId",),
+        "query": (),
+        "body": "none",
+        "deprecated": False,
+        "summary": "Register or update license metadata (authenticated)",
+    },
     "getContractsByAddress": {
         "method": "GET",
         "path": "/contracts/{address}",
@@ -1224,6 +1333,16 @@ OPERATIONS: Dict[str, Dict[str, object]] = {
         "body": "none",
         "deprecated": False,
         "summary": "Get graph data for visual exploration (D3.js/Cytoscape compatible)",
+    },
+    "postGraphQuery": {
+        "method": "POST",
+        "path": "/graph/query",
+        "path_params": (),
+        "query": (),
+        "body": "required",
+        "content_type": "application/json",
+        "deprecated": False,
+        "summary": "Execute parameterized Cypher query",
     },
     "postGraphTemplatesCommunityDetection": {
         "method": "POST",
@@ -3518,6 +3637,16 @@ OPERATIONS: Dict[str, Dict[str, object]] = {
         "body": "none",
         "deprecated": False,
         "summary": "Get regulatory compliance reports",
+    },
+    "postRwaComplianceReportsSchedule": {
+        "method": "POST",
+        "path": "/rwa-compliance/reports/schedule",
+        "path_params": (),
+        "query": (),
+        "body": "required",
+        "content_type": "application/json",
+        "deprecated": False,
+        "summary": "Schedule recurring RWA compliance report generation and delivery",
     },
     "getSacTrustlines": {
         "method": "GET",

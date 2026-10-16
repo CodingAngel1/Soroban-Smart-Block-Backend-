@@ -15,6 +15,7 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
+import { config } from '../config';
 import { logger } from '../logger';
 
 // ─── Tier definitions ─────────────────────────────────────────────────────────
@@ -29,10 +30,10 @@ interface TierLimits {
 
 export const TIER_LIMITS: Record<RateLimitTier, TierLimits> = {
   unauthenticated: { perMinute: 60, burst: 10, ttlSeconds: 3600 },
-  free: { perMinute: 1000, burst: 50, ttlSeconds: 86400 },
-  developer: { perMinute: 1000, burst: 50, ttlSeconds: 86400 },
-  pro: { perMinute: 10000, burst: 200, ttlSeconds: 2592000 },
-  enterprise: { perMinute: 60000, burst: 500, ttlSeconds: 2592000 },
+  free: { perMinute: config.rateLimitPublicMax, burst: 50, ttlSeconds: 86400 },
+  developer: { perMinute: config.rateLimitDeveloperMax, burst: 50, ttlSeconds: 86400 },
+  pro: { perMinute: config.rateLimitPremiumMax, burst: 200, ttlSeconds: 2592000 },
+  enterprise: { perMinute: config.rateLimitPremiumMax, burst: 500, ttlSeconds: 2592000 },
 };
 
 // ─── Endpoint group multipliers (fraction of tier limit) ─────────────────────

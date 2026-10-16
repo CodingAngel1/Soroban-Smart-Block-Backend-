@@ -66,6 +66,7 @@ export function createApp(options: AppOptions): express.Express {
   const { isShuttingDown, serviceStartTime, disabledServices } = options;
 
   const app = express();
+  configureApiJsonSerialization(app);
   app.set('trust proxy', config.trustProxy);
   app.use(rejectUntrustedForwardedHeaders);
 
