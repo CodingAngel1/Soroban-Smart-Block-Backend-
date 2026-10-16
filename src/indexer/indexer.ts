@@ -36,9 +36,44 @@ import {
   indexTransaction,
   indexSafely,
 } from '../services/search/full-text-search';
+import { processCheckpointedRange, type CatchUpCheckpointStore } from './catch-up';
+import { getIndexerPauseState } from './worker-control';
 
 const BATCH = config.indexerBatchSize;
 const WORKERS = config.indexerCatchupWorkers;
+const CHECKPOINT_WINDOW_SIZE = 100;
+
+const catchUpCheckpointStore: CatchUpCheckpointStore = {
+  async findUnique({ where: { network_rangeStart_rangeEnd: key } }) {
+    const rows = await prismaWrite.$queryRaw<
+      Array<{
+        lastCommittedLedger: number | null;
+        completed: boolean;
+      }>
+    >`
+      SELECT "last_committed_ledger" AS "lastCommittedLedger", "completed"
+      FROM "_catch_up_checkpoints"
+      WHERE "network" = ${key.network}
+        AND "range_start" = ${key.rangeStart}
+        AND "range_end" = ${key.rangeEnd}
+      LIMIT 1
+    `;
+    return rows[0] ?? null;
+  },
+  async upsert({ where: { network_rangeStart_rangeEnd: key }, create, update }) {
+    await prismaWrite.$executeRaw`
+      INSERT INTO "_catch_up_checkpoints"
+        ("id", "network", "range_start", "range_end", "last_committed_ledger", "completed", "updated_at", "created_at")
+      VALUES
+        (${create.id}, ${key.network}, ${key.rangeStart}, ${key.rangeEnd}, ${update.lastCommittedLedger}, ${update.completed}, NOW(), NOW())
+      ON CONFLICT ("network", "range_start", "range_end")
+      DO UPDATE SET
+        "last_committed_ledger" = EXCLUDED."last_committed_ledger",
+        "completed" = EXCLUDED."completed",
+        "updated_at" = NOW()
+    `;
+  },
+};
 
 function withIndexerSpan<T>(
   name: string,
@@ -673,148 +708,55 @@ export async function indexSingleLedger(ledgerSeq: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Parallel catch-up with per-batch checkpointing (issue #881)
+// Parallel catch-up with durable per-batch checkpointing
 // ---------------------------------------------------------------------------
 
 /**
- * Split [from, to] into at most `n` equal-sized chunks.
- */
-function chunkRange(from: number, to: number, n: number): Array<[number, number]> {
-  const total = to - from + 1;
-  const size = Math.ceil(total / n);
-  const chunks: Array<[number, number]> = [];
-  for (let start = from; start <= to; start += size) {
-    chunks.push([start, Math.min(start + size - 1, to)]);
-  }
-  return chunks;
-}
-
-/**
- * Persist a CatchUpCheckpoint row for a worker's chunk.
+ * Run parallel workers over fixed, network-scoped checkpoint windows. Stable
+ * boundaries let a later catch-up with a different target resume the same
+ * work, while a failed checkpoint write stops cursor advancement.
  *
- * Uses upsert so a crash-then-restart path finds the existing row and reads
- * `lastCommittedLedger` to resume mid-batch instead of re-fetching from
- * `rangeStart`.
+ * Database upserts use deterministic transaction/event keys, so a crash
+ * between persistence and checkpointing can safely replay the last batch.
  */
-async function upsertCheckpoint(
-  rangeStart: number,
-  rangeEnd: number,
-  lastCommittedLedger: number | null,
-  completed: boolean,
-): Promise<void> {
-  const db = prismaWrite as any;
-  try {
-    await db.catchUpCheckpoint.upsert({
-      where: { rangeStart_rangeEnd: { rangeStart, rangeEnd } },
-      create: {
-        id: uuidv7(),
-        rangeStart,
-        rangeEnd,
-        lastCommittedLedger,
-        completed,
-      },
-      update: {
-        lastCommittedLedger,
-        completed,
-      },
-    });
-  } catch (err) {
-    // Best-effort: checkpoint failure must not abort the indexing work
-    logger.warn(`[catch-up] checkpoint upsert failed for ${rangeStart}-${rangeEnd}: ${err}`);
+async function catchUp(from: number, to: number): Promise<boolean> {
+  const firstWindow = Math.floor((from - 1) / CHECKPOINT_WINDOW_SIZE) * CHECKPOINT_WINDOW_SIZE + 1;
+  const windows: Array<[number, number, number, number]> = [];
+  for (let windowStart = firstWindow; windowStart <= to; windowStart += CHECKPOINT_WINDOW_SIZE) {
+    const windowEnd = windowStart + CHECKPOINT_WINDOW_SIZE - 1;
+    windows.push([windowStart, windowEnd, Math.max(from, windowStart), Math.min(to, windowEnd)]);
   }
-}
+  logger.info(`[catch-up] ${windows.length} checkpoint window(s) covering ledgers ${from}–${to}`);
 
-/**
- * Look up the resume cursor for a chunk from a persisted checkpoint.
- * Returns the last committed ledger + 1 (i.e. where to resume from), or
- * `rangeStart` if no checkpoint exists yet.
- */
-async function getChunkResumeCursor(rangeStart: number, rangeEnd: number): Promise<number> {
-  const db = prismaWrite as any;
-  try {
-    const row: { lastCommittedLedger: number | null; completed: boolean } | null =
-      await db.catchUpCheckpoint.findUnique({
-        where: { rangeStart_rangeEnd: { rangeStart, rangeEnd } },
-        select: { lastCommittedLedger: true, completed: true },
-      });
-    if (!row) return rangeStart;
-    if (row.completed) {
-      logger.info(`[catch-up] chunk ${rangeStart}-${rangeEnd} already completed — skipping`);
-      return rangeEnd + 1; // signals "nothing to do"
-    }
-    if (row.lastCommittedLedger !== null) {
-      const resume = row.lastCommittedLedger + 1;
-      if (resume <= rangeEnd) {
-        logger.info(
-          `[catch-up] resuming chunk ${rangeStart}-${rangeEnd} from ledger ${resume} ` +
-            `(last committed: ${row.lastCommittedLedger})`,
-        );
-        return resume;
+  const concurrency = Math.max(1, WORKERS);
+  const workerResults = await Promise.all(
+    Array.from({ length: Math.min(concurrency, windows.length) }, async (_, worker) => {
+      let complete = true;
+      for (let index = worker; index < windows.length; index += concurrency) {
+        const [rangeStart, rangeEnd, workStart, workEnd] = windows[index];
+        complete =
+          (await processCheckpointedRange({
+            network: getActiveNetwork(),
+            rangeStart,
+            rangeEnd,
+            workStart,
+            workEnd,
+            batchSize: BATCH,
+            store: catchUpCheckpointStore,
+            processRange: processLedgerRange,
+            isPaused: async () => (await getIndexerPauseState()).paused,
+          })) && complete;
+        if (!complete) return false;
       }
-    }
-  } catch (err) {
-    logger.warn(`[catch-up] checkpoint read failed for ${rangeStart}-${rangeEnd}: ${err}`);
-  }
-  return rangeStart;
-}
-
-/**
- * Process a single worker chunk [rangeStart, rangeEnd] with intra-chunk
- * checkpointing every BATCH ledgers.
- *
- * After each BATCH-ledger sub-range completes, the progress is persisted to
- * CatchUpCheckpoint.  On crash-restart `getChunkResumeCursor` picks up the
- * last committed position so at most BATCH ledgers are re-processed.
- */
-async function processChunkWithCheckpointing(rangeStart: number, rangeEnd: number): Promise<void> {
-  // Resume from last checkpoint rather than rangeStart
-  const resumeFrom = await getChunkResumeCursor(rangeStart, rangeEnd);
-  if (resumeFrom > rangeEnd) {
-    // Chunk already completed in a previous run
-    return;
-  }
-
-  // Write an initial "in-progress" checkpoint so a crash before the first
-  // sub-batch flush is also detectable (lastCommittedLedger = null means
-  // "started but nothing committed yet").
-  await upsertCheckpoint(
-    rangeStart,
-    rangeEnd,
-    resumeFrom > rangeStart ? resumeFrom - 1 : null,
-    false,
+      return complete;
+    }),
   );
-
-  // Process in BATCH-sized sub-ranges, persisting progress after each one
-  for (let subStart = resumeFrom; subStart <= rangeEnd; subStart += BATCH) {
-    const subEnd = Math.min(subStart + BATCH - 1, rangeEnd);
-    await processLedgerRange(subStart, subEnd);
-    // Flush checkpoint after each successful sub-batch
-    await upsertCheckpoint(rangeStart, rangeEnd, subEnd, subEnd >= rangeEnd);
-    logger.debug(
-      `[catch-up] checkpoint flushed for chunk ${rangeStart}-${rangeEnd}: committed ${subEnd}`,
-    );
+  if (workerResults.some((complete) => !complete) || (await getIndexerPauseState()).paused) {
+    return false;
   }
-}
-
-/**
- * Run parallel workers over [from, to], then advance IndexerState to `to`.
- * Workers process non-overlapping chunks concurrently, each with its own
- * intra-chunk checkpoint.  The global cursor write is serialised after all
- * workers succeed so a partial failure leaves the cursor unchanged and the
- * whole round retries safely (upserts are idempotent).
- *
- * On restart after a crash, each worker resumes from its last persisted
- * CatchUpCheckpoint rather than re-fetching from the chunk start.
- */
-async function catchUp(from: number, to: number): Promise<void> {
-  const chunks = chunkRange(from, to, WORKERS);
-  logger.info(
-    `[catch-up] ${chunks.length} worker(s) covering ledgers ${from}–${to} ` +
-      `(chunk size ~${chunks[0][1] - chunks[0][0] + 1})`,
-  );
-  await Promise.all(chunks.map(([s, e]) => processChunkWithCheckpointing(s, e)));
   await setLastIndexedLedger(to);
   logger.info(`[catch-up] done — cursor advanced to ${to}`);
+  return true;
 }
 
 async function processSessionAuthorization(
@@ -1011,6 +953,10 @@ export class SorobanEventWorker {
 
     while (!this.shouldStop) {
       try {
+        if ((await getIndexerPauseState()).paused) {
+          await sleep(config.indexerPollIntervalMs);
+          continue;
+        }
         if (this.isProcessing) {
           await sleep(config.indexerPollIntervalMs);
           continue;
@@ -1031,6 +977,7 @@ export class SorobanEventWorker {
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
+        if ((await getIndexerPauseState()).paused) return;
         const last = await getLastIndexedLedger();
         if (last >= targetLedger) return;
 
@@ -1054,8 +1001,8 @@ export class SorobanEventWorker {
           // Attempt to backfill the gap
           try {
             logger.info(`🔄 Attempting to backfill gap ${gapStart} → ${gapEnd}...`);
-            if (gapEnd - gapStart >= BATCH && WORKERS > 1) {
-              await catchUp(gapStart, gapEnd);
+            if (gapEnd - gapStart >= BATCH) {
+              if (!(await catchUp(gapStart, gapEnd))) return;
             } else {
               await processLedgerRange(gapStart, gapEnd);
               await setLastIndexedLedger(gapEnd);
@@ -1083,8 +1030,8 @@ export class SorobanEventWorker {
         }
 
         const gap = targetLedger - last;
-        if (gap > BATCH && WORKERS > 1) {
-          await catchUp(last + 1, targetLedger);
+        if (gap > BATCH) {
+          if (!(await catchUp(last + 1, targetLedger))) return;
           return;
         }
 

@@ -35,6 +35,14 @@ vi.mock('../../src/config', () => ({
   },
 }));
 
+vi.mock('../../src/metrics', () => ({
+  rpcCallDuration: { observe: vi.fn() },
+  rpcCallErrorsTotal: { inc: vi.fn() },
+  rpcCallRetriesTotal: { inc: vi.fn() },
+  horizonCallDuration: { observe: vi.fn() },
+  horizonCallErrorsTotal: { inc: vi.fn() },
+}));
+
 import {
   fetchEvents,
   fetchLedgerMetadata,
@@ -95,6 +103,19 @@ describe('rpc module', () => {
 
       const result = await fetchEvents(1000, 1010);
       expect(result).toHaveLength(0);
+    });
+
+    it('fails rather than returning a partial result when RPC cursors repeat', async () => {
+      const page = Array.from({ length: 200 }, (_, index) => ({
+        contractId: 'CA...',
+        txHash: `tx-${index}`,
+        ledger: 1005,
+        topic: [],
+        pagingToken: 'repeated-token',
+      }));
+      sharedMockServer.getEvents.mockResolvedValue({ events: page });
+
+      await expect(fetchEvents(1000, 1010)).rejects.toThrow('Repeated cursor detected');
     });
 
     it('retries on rate limit error', async () => {

@@ -155,7 +155,7 @@ export class BenchmarkStore {
 | Metric | Value |
 |--------|-------|
 | Mean | ${comp.current.metrics.mean.toFixed(3)}ms |
-| Median | ${comp.current.metrics.median.toFixed(3)}ms |
+${comp.current.throughput ? `| Throughput | ${comp.current.throughput.perSecond.toFixed(0)} ${comp.current.throughput.unit}/second |\n` : ''}| Median | ${comp.current.metrics.median.toFixed(3)}ms |
 | StdDev | ${comp.current.metrics.stdDev.toFixed(3)}ms |
 | P95 | ${comp.current.metrics.p95.toFixed(3)}ms |
 | P99 | ${comp.current.metrics.p99.toFixed(3)}ms |
