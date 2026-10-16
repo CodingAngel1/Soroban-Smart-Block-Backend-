@@ -1,11 +1,47 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prismaRead as prisma, prismaBackfill } from '../db';
+import { config } from '../config';
 import { ChannelManager } from '../feed/channelManager';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { logger } from '../logger';
 
 const router = Router();
+const MAX_RANGE_DAYS = 90;
+const MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024;
+const MAX_RECORDS = 10_000_000;
+
+class BackfillValidationError extends Error {}
+
+function validateBackfillRange(validatedData: z.infer<typeof backfillSchema>) {
+  if (!ChannelManager.isValidChannel(validatedData.channelName)) {
+    throw new BackfillValidationError('Invalid channel name');
+  }
+
+  const startTime = new Date(validatedData.startTime);
+  const endTime = new Date(validatedData.endTime);
+  if (startTime >= endTime) {
+    throw new BackfillValidationError('Start time must be before end time');
+  }
+
+  const diffDays = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60 * 24);
+  if (diffDays > MAX_RANGE_DAYS) {
+    throw new BackfillValidationError(`Date range exceeds maximum of ${MAX_RANGE_DAYS} days`);
+  }
+
+  return { startTime, endTime, diffDays };
+}
+
+function respondWithBackfillError(error: unknown, res: Response, operation: string) {
+  if (error instanceof z.ZodError) {
+    return res.status(400).json({ error: 'Invalid request data', details: error.errors });
+  }
+  if (error instanceof BackfillValidationError) {
+    return res.status(400).json({ error: error.message });
+  }
+  logger.error(operation, error);
+  return res.status(500).json({ error: 'Internal server error' });
+}
 
 const backfillSchema = z.object({
   channelName: z.string(),
@@ -34,29 +70,7 @@ router.post(
   asyncHandler(async (req, res) => {
     try {
       const validatedData = backfillSchema.parse(req.body);
-
-      // Validate channel exists
-      if (!ChannelManager.isValidChannel(validatedData.channelName)) {
-        return res.status(400).json({ error: 'Invalid channel name' });
-      }
-
-      // Validate date range
-      const startTime = new Date(validatedData.startTime);
-      const endTime = new Date(validatedData.endTime);
-
-      if (startTime >= endTime) {
-        return res.status(400).json({ error: 'Start time must be before end time' });
-      }
-
-      // Check if range is within limits (max 90 days)
-      const maxDays = 90;
-      const diffDays = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60 * 24);
-
-      if (diffDays > maxDays) {
-        return res.status(400).json({
-          error: `Date range exceeds maximum of ${maxDays} days`,
-        });
-      }
+      const { startTime, endTime, diffDays } = validateBackfillRange(validatedData);
 
       const userId = req.headers['x-user-id'] as string;
 
@@ -83,11 +97,49 @@ router.post(
         estimatedCompletionTime: getEstimatedCompletionTime(validatedData.channelName, diffDays),
       });
     } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: 'Invalid request data', details: error.errors });
+      return respondWithBackfillError(error, res, 'Failed to create backfill request:');
+    }
+  }),
+);
+
+// POST /api/v1/feed/backfill/dry-run - Read-only estimate; creates no request or job
+router.post(
+  '/dry-run',
+  operatorAuth,
+  asyncHandler(async (req, res) => {
+    try {
+      const validatedData = backfillSchema.parse(req.body);
+      const { startTime, endTime } = validateBackfillRange(validatedData);
+      const recordCount = await getRecordCount(validatedData.channelName, startTime, endTime);
+      const estimatedFileSizeBytes = estimateFileSize(recordCount, validatedData.format);
+      const warnings: string[] = [];
+
+      if (recordCount > MAX_RECORDS) {
+        warnings.push(`Estimated records exceed the ${MAX_RECORDS} record limit.`);
       }
-      logger.error('Failed to create backfill request:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      if (estimatedFileSizeBytes > MAX_FILE_SIZE_BYTES) {
+        warnings.push(`Estimated file size exceeds the ${MAX_FILE_SIZE_BYTES} byte limit.`);
+      }
+
+      return res.json({
+        dryRun: true,
+        network: config.stellarNetwork,
+        channelName: validatedData.channelName,
+        startTime,
+        endTime,
+        format: validatedData.format,
+        recordCount,
+        estimatedFileSizeBytes,
+        limits: {
+          maxRangeDays: MAX_RANGE_DAYS,
+          maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+          maxRecords: MAX_RECORDS,
+        },
+        warnings,
+        mutationsPerformed: false,
+      });
+    } catch (error) {
+      return respondWithBackfillError(error, res, 'Failed to generate backfill dry-run report:');
     }
   }),
 );
@@ -96,9 +148,9 @@ router.post(
 // Must be registered before /:requestId to prevent the param route from shadowing it
 router.get('/limits', (_req, res) => {
   res.json({
-    maxRangeDays: 90,
-    maxFileSizeBytes: 1024 * 1024 * 1024, // 1GB
-    maxRecords: 10000000, // 10M records
+    maxRangeDays: MAX_RANGE_DAYS,
+    maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+    maxRecords: MAX_RECORDS,
     rateLimitPerDay: 10,
     supportedFormats: ['jsonl', 'csv', 'parquet', 'arrow', 'json'],
     supportedCompression: ['none', 'gzip', 'brotli'],
@@ -273,45 +325,30 @@ async function getRecordCount(
   startTime: Date,
   endTime: Date,
 ): Promise<number> {
-  try {
-    // These counts scan potentially large (up to 90-day) ranges, so they run
-    // on the long-timeout backfill connection instead of the default one.
-    switch (channelName) {
-      case 'transactions':
-        return prismaBackfill.transaction.count({
-          where: { ledgerCloseTime: { gte: startTime, lte: endTime } },
-        });
-      case 'events':
-        return prismaBackfill.event.count({
-          where: { ledgerCloseTime: { gte: startTime, lte: endTime } },
-        });
-      case 'ledgers':
-        return prismaBackfill.ledger.count({
-          where: { closeTime: { gte: startTime, lte: endTime } },
-        });
-      case 'trades':
-        return prismaBackfill.dexPool.count({
-          where: { lastSyncedAt: { gte: startTime, lte: endTime } },
-        });
-      case 'metrics':
-        return prismaBackfill.contractResourceMetric.count({
-          where: { ledgerCloseTime: { gte: startTime, lte: endTime } },
-        });
-      default:
-        return 0;
-    }
-  } catch {
-    // Fall back to mock count if DB unavailable
-    const mockCounts: Record<string, number> = {
-      transactions: 100000,
-      events: 500000,
-      ledgers: 10000,
-      trades: 50000,
-      metrics: 5000,
-    };
-    const baseCount = mockCounts[channelName] || 10000;
-    const daysDiff = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60 * 24);
-    return Math.round((baseCount * daysDiff) / 30);
+  const network = config.stellarNetwork;
+  switch (channelName) {
+    case 'transactions':
+      return prismaBackfill.transaction.count({
+        where: { network, ledgerCloseTime: { gte: startTime, lte: endTime } },
+      });
+    case 'events':
+      return prismaBackfill.event.count({
+        where: { network, ledgerCloseTime: { gte: startTime, lte: endTime } },
+      });
+    case 'ledgers':
+      return prismaBackfill.ledger.count({
+        where: { network, closeTime: { gte: startTime, lte: endTime } },
+      });
+    case 'trades':
+      return prismaBackfill.dexPool.count({
+        where: { lastSyncedAt: { gte: startTime, lte: endTime } },
+      });
+    case 'metrics':
+      return prismaBackfill.contractResourceMetric.count({
+        where: { ledgerCloseTime: { gte: startTime, lte: endTime } },
+      });
+    default:
+      throw new Error(`Unsupported backfill channel: ${channelName}`);
   }
 }
 

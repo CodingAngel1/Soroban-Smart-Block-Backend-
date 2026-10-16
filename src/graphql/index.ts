@@ -4,7 +4,7 @@ import { typeDefs } from './schema';
 import { resolvers } from './resolvers';
 import { subscriptionResolvers } from './subscriptions';
 import { createContext } from './context';
-import { complexityPlugin, depthLimitPlugin } from './plugins';
+import { complexityPlugin, depthLimitPlugin, graphqlMetricsPlugin } from './plugins';
 
 export const schema = makeExecutableSchema({
   typeDefs,
@@ -21,7 +21,7 @@ const graphiqlEnabled =
 const yoga = createYoga({
   schema,
   context: createContext,
-  plugins: [complexityPlugin, depthLimitPlugin],
+  plugins: [complexityPlugin, depthLimitPlugin, graphqlMetricsPlugin],
   graphqlEndpoint: '/api/graphql',
   graphiql: graphiqlEnabled
     ? {

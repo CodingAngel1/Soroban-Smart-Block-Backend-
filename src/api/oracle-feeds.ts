@@ -148,7 +148,7 @@ export const oracleFeedsRouter = Router();
 
 /**
  * @swagger
- * /oracle-feeds:
+ * /oracles/feeds:
  *   get:
  *     summary: Oracle feeds service overview
  *     tags: [Oracle Feeds]
@@ -162,15 +162,15 @@ oracleFeedsRouter.get('/', (_req: Request, res: Response) => {
     description: 'Real-time and historical oracle price feed data for Soroban contracts',
     supportedAssets: ['XLM/USD', 'BTC/USD', 'ETH/USD', 'USDC/USD'],
     endpoints: [
-      'GET  /oracle-feeds',
-      'GET  /oracle-feeds/assets',
-      'GET  /oracle-feeds/assets/:assetPair/price',
-      'GET  /oracle-feeds/assets/:assetPair/history',
-      'GET  /oracle-feeds/assets/:assetPair/ohlcv',
-      'POST /oracle-feeds/subscribe',
-      'GET  /oracle-feeds/subscriptions',
-      'DELETE /oracle-feeds/subscriptions/:id',
-      'GET  /oracle-feeds/providers',
+      'GET  /oracles/feeds',
+      'GET  /oracles/feeds/assets',
+      'GET  /oracles/feeds/assets/:assetPair/price',
+      'GET  /oracles/feeds/assets/:assetPair/history',
+      'GET  /oracles/feeds/assets/:assetPair/ohlcv',
+      'POST /oracles/feeds/subscribe',
+      'GET  /oracles/feeds/subscriptions',
+      'DELETE /oracles/feeds/subscriptions/:id',
+      'GET  /oracles/feeds/providers',
     ],
   });
 });
@@ -179,7 +179,7 @@ oracleFeedsRouter.get('/', (_req: Request, res: Response) => {
 
 /**
  * @swagger
- * /oracle-feeds/assets:
+ * /oracles/feeds/assets:
  *   get:
  *     summary: List all available oracle price feed assets
  *     tags: [Oracle Feeds]
@@ -203,7 +203,7 @@ oracleFeedsRouter.get('/assets', (_req: Request, res: Response) => {
 
 /**
  * @swagger
- * /oracle-feeds/assets/{assetPair}/price:
+ * /oracles/feeds/assets/{assetPair}/price:
  *   get:
  *     summary: Get current price for an asset pair
  *     tags: [Oracle Feeds]
@@ -264,7 +264,7 @@ oracleFeedsRouter.get(
 
 /**
  * @swagger
- * /oracle-feeds/assets/{assetPair}/history:
+ * /oracles/feeds/assets/{assetPair}/history:
  *   get:
  *     summary: Get historical price data for an asset pair
  *     tags: [Oracle Feeds]
@@ -303,7 +303,7 @@ oracleFeedsRouter.get('/assets/:assetPair/history', (req: Request, res: Response
 
 /**
  * @swagger
- * /oracle-feeds/assets/{assetPair}/ohlcv:
+ * /oracles/feeds/assets/{assetPair}/ohlcv:
  *   get:
  *     summary: Get OHLCV (open/high/low/close/volume) candle data
  *     tags: [Oracle Feeds]
@@ -341,7 +341,7 @@ oracleFeedsRouter.get('/assets/:assetPair/ohlcv', (req: Request, res: Response) 
 
 /**
  * @swagger
- * /oracle-feeds/subscribe:
+ * /oracles/feeds/subscribe:
  *   post:
  *     summary: Subscribe to price feed updates
  *     tags: [Oracle Feeds]
@@ -388,7 +388,7 @@ oracleFeedsRouter.post('/subscribe', (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /oracle-feeds/subscriptions:
+ * /oracles/feeds/subscriptions:
  *   get:
  *     summary: List active feed subscriptions
  *     tags: [Oracle Feeds]
@@ -404,7 +404,7 @@ oracleFeedsRouter.get('/subscriptions', (_req: Request, res: Response) => {
 
 /**
  * @swagger
- * /oracle-feeds/subscriptions/{id}:
+ * /oracles/feeds/subscriptions/{id}:
  *   delete:
  *     summary: Cancel a feed subscription
  *     tags: [Oracle Feeds]
@@ -425,7 +425,7 @@ oracleFeedsRouter.delete('/subscriptions/:id', (_req: Request, res: Response) =>
 
 /**
  * @swagger
- * /oracle-feeds/providers:
+ * /oracles/feeds/providers:
  *   get:
  *     summary: List oracle data providers
  *     tags: [Oracle Feeds]

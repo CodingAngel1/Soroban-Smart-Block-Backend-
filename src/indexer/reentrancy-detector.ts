@@ -1,4 +1,5 @@
 import { prismaWrite as prisma } from '../db';
+import { config } from '../config';
 import { type CallTrace } from './call-trace';
 import { uuidv7 } from '../utils/uuidv7';
 
@@ -148,7 +149,9 @@ export async function storeReentrancyAlert(signal: ReentrancySignal): Promise<vo
       },
     }),
     prisma.transaction.update({
-      where: { hash: signal.transactionHash },
+      where: {
+        network_hash: { network: config.stellarNetwork, hash: signal.transactionHash },
+      },
       data: { reentrantAlert: true },
     }),
   ]);

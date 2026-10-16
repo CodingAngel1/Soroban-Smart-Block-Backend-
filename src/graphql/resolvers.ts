@@ -1,5 +1,6 @@
 import { GraphQLError } from 'graphql';
 import type { GraphQLContext } from './context';
+import { config } from '../config';
 
 const MAX_LIMIT = 100;
 const DEFAULT_PAGE_LIMIT = 20;
@@ -14,20 +15,26 @@ function clampLimit(value: number | undefined | null, defaultVal: number): numbe
   return Math.max(1, Math.min(value ?? defaultVal, MAX_LIMIT));
 }
 
-function encodeCursor(ledgerSequence: number, id: string): string {
-  return Buffer.from(JSON.stringify({ l: ledgerSequence, i: id })).toString('base64url');
+interface CursorPosition {
+  ledgerSequence: number;
+  id: string;
 }
 
-function decodeCursor(cursor: string): { ledgerSequence: number; id: string } | undefined {
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-    if (typeof parsed.l === 'number' && typeof parsed.i === 'string') {
-      return { ledgerSequence: parsed.l, id: parsed.i };
-    }
-    return undefined;
-  } catch {
-    return undefined;
+function decodeCursor(cursor: string, scope: string): CursorPosition {
+  const decoded = decodeOpaqueCursor(cursor, scope);
+  if (
+    typeof decoded !== 'object' ||
+    decoded === null ||
+    !('ledgerSequence' in decoded) ||
+    typeof decoded.ledgerSequence !== 'number' ||
+    !('id' in decoded) ||
+    typeof decoded.id !== 'string'
+  ) {
+    throw new GraphQLError('Invalid or mismatched cursor', {
+      extensions: { code: 'BAD_USER_INPUT' },
+    });
   }
+  return { ledgerSequence: decoded.ledgerSequence, id: decoded.id };
 }
 
 async function paginateTransactions(
@@ -37,23 +44,22 @@ async function paginateTransactions(
   orderBy: Record<string, string>[] = [{ ledgerSequence: 'desc' }, { id: 'desc' }],
 ) {
   const limit = clampLimit(args.limit, DEFAULT_PAGE_LIMIT);
+  const scope = createCursorScope('graphql.transactions', { where, limit });
 
   let finalWhere: Record<string, unknown> = where;
   if (args.cursor) {
-    const decoded = decodeCursor(args.cursor);
-    if (decoded) {
-      finalWhere = {
-        AND: [
-          where,
-          {
-            OR: [
-              { ledgerSequence: { lt: decoded.ledgerSequence } },
-              { ledgerSequence: decoded.ledgerSequence, id: { lt: decoded.id } },
-            ],
-          },
-        ],
-      };
-    }
+    const decoded = decodeCursor(args.cursor, scope);
+    finalWhere = {
+      AND: [
+        where,
+        {
+          OR: [
+            { ledgerSequence: { lt: decoded.ledgerSequence } },
+            { ledgerSequence: decoded.ledgerSequence, id: { lt: decoded.id } },
+          ],
+        },
+      ],
+    };
   }
 
   const rows = await ctx.prisma.transaction.findMany({
@@ -65,30 +71,32 @@ async function paginateTransactions(
   const data = hasNext ? rows.slice(0, limit) : rows;
   const nextCursor =
     hasNext && data.length > 0
-      ? encodeCursor(data[data.length - 1].ledgerSequence, data[data.length - 1].id)
+      ? encodeOpaqueCursor(
+          { ledgerSequence: data[data.length - 1].ledgerSequence, id: data[data.length - 1].id },
+          scope,
+        )
       : null;
   return { data, hasNext, nextCursor };
 }
 
 async function paginateEvents(ctx: GraphQLContext, where: Record<string, unknown>, args: PageArgs) {
   const limit = clampLimit(args.limit, DEFAULT_PAGE_LIMIT);
+  const scope = createCursorScope('graphql.events', { where, limit });
 
   let finalWhere: Record<string, unknown> = where;
   if (args.cursor) {
-    const decoded = decodeCursor(args.cursor);
-    if (decoded) {
-      finalWhere = {
-        AND: [
-          where,
-          {
-            OR: [
-              { ledgerSequence: { lt: decoded.ledgerSequence } },
-              { ledgerSequence: decoded.ledgerSequence, id: { lt: decoded.id } },
-            ],
-          },
-        ],
-      };
-    }
+    const decoded = decodeCursor(args.cursor, scope);
+    finalWhere = {
+      AND: [
+        where,
+        {
+          OR: [
+            { ledgerSequence: { lt: decoded.ledgerSequence } },
+            { ledgerSequence: decoded.ledgerSequence, id: { lt: decoded.id } },
+          ],
+        },
+      ],
+    };
   }
 
   const rows = await ctx.prisma.event.findMany({
@@ -100,7 +108,10 @@ async function paginateEvents(ctx: GraphQLContext, where: Record<string, unknown
   const data = hasNext ? rows.slice(0, limit) : rows;
   const nextCursor =
     hasNext && data.length > 0
-      ? encodeCursor(data[data.length - 1].ledgerSequence, data[data.length - 1].id)
+      ? encodeOpaqueCursor(
+          { ledgerSequence: data[data.length - 1].ledgerSequence, id: data[data.length - 1].id },
+          scope,
+        )
       : null;
   return { data, hasNext, nextCursor };
 }
@@ -352,17 +363,31 @@ export const resolvers = {
     },
     async tokens(_parent: unknown, args: { cursor?: string; limit?: number }, ctx: GraphQLContext) {
       const limit = clampLimit(args.limit, DEFAULT_PAGE_LIMIT);
+      const scope = createCursorScope('graphql.tokens', { limit });
+      let cursor: string | undefined;
+      if (args.cursor) {
+        const decoded = decodeOpaqueCursor(args.cursor, scope);
+        if (typeof decoded !== 'string') {
+          throw new GraphQLError('Invalid or mismatched cursor', {
+            extensions: { code: 'BAD_USER_INPUT' },
+          });
+        }
+        cursor = decoded;
+      }
 
       const contracts = await ctx.prisma.contract.findMany({
         where: { isToken: true },
         orderBy: [{ tokenSymbol: 'asc' }, { address: 'asc' }],
         take: limit + 1,
-        ...(args.cursor ? { cursor: { address: args.cursor }, skip: 1 } : {}),
+        ...(cursor ? { cursor: { address: cursor }, skip: 1 } : {}),
       });
 
       const hasNext = contracts.length > limit;
       const data = hasNext ? contracts.slice(0, limit) : contracts;
-      const nextCursor = hasNext && data.length > 0 ? data[data.length - 1].address : null;
+      const nextCursor =
+        hasNext && data.length > 0
+          ? encodeOpaqueCursor(data[data.length - 1].address, scope)
+          : null;
 
       return {
         data: data.map((c) => ({
@@ -380,7 +405,11 @@ export const resolvers = {
       return { address: args.address };
     },
     ledger(_parent: unknown, args: { sequence: number }, ctx: GraphQLContext) {
-      return ctx.prisma.ledger.findUnique({ where: { sequence: args.sequence } });
+      return ctx.prisma.ledger.findUnique({
+        where: {
+          network_sequence: { network: config.stellarNetwork, sequence: args.sequence },
+        },
+      });
     },
   },
 

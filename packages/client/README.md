@@ -47,23 +47,53 @@ Invalid parameters throw `RequestValidationError` before any request is sent.
 
 ## Pagination
 
+`paginate` yields each item from cursor-based responses (`nextCursor` or
+`cursor`) and page-based responses (`page` with `pages` or `total`), including
+those that nest the metadata under `pagination`. It validates the response
+shape, rejects repeated cursors, and throws if the default or configured
+`maxPages` cap is reached before the API reports completion.
+
 ```ts
 for await (const tx of client.paginate('getTransactions', { query: { limit: 100 } })) {
   console.log(tx);
 }
 ```
 
-## Errors
+To bound a large traversal, supply a positive page cap:
 
 ```ts
-import { NotFoundError, RateLimitError, SorobanApiError } from '@soroban-explorer/client';
+for await (const tx of client.paginate(
+  'getTransactions',
+  { query: { limit: 100 } },
+  { maxPages: 10 },
+)) {
+  console.log(tx);
+}
+```
+
+## Errors
+
+The generated `SorobanClient` uses transport-specific error classes so the
+existing 1.0 reputation-client error exports remain compatible:
+
+```ts
+import {
+  SorobanClient,
+  TransportApiError,
+  TransportNotFoundError,
+  TransportRateLimitError,
+} from '@soroban-explorer/client';
+
+const client = new SorobanClient();
+const hash = 'transaction-hash';
 
 try {
   await client.transactions.get(hash);
 } catch (err) {
-  if (err instanceof NotFoundError) …;
-  else if (err instanceof RateLimitError) console.log(err.retryAfterMs, err.rateLimit);
-  else if (err instanceof SorobanApiError) console.log(err.status, err.code, err.requestId);
+  if (err instanceof TransportNotFoundError) {
+    /* unknown transaction */
+  } else if (err instanceof TransportRateLimitError) console.log(err.retryAfterMs, err.rateLimit);
+  else if (err instanceof TransportApiError) console.log(err.status, err.code, err.requestId);
 }
 ```
 
@@ -86,6 +116,10 @@ try {
 | `fetch`           | global     | Custom fetch implementation                                 |
 | `logger`          | none       | `{ debug, warn }`; the SDK is silent by default             |
 | `onRequest`       | none       | Per-attempt telemetry event (wire to OpenTelemetry etc.)    |
+
+See the [retry policy](../../docs/sdk/typescript/retry-behavior.md) for safe
+replay behavior, `429` assumptions, and guidance for ambiguous mutation
+timeouts.
 
 ## Realtime
 
@@ -121,6 +155,8 @@ const client = new ReputationClient({ baseUrl: 'http://localhost:3000' });
 try {
   const score = await retryOnRateLimit(() => client.score('G...'), { maxRetries: 3 });
 } catch (err) {
-  if (err instanceof NotFoundError) { /* unknown address */ }
+  if (err instanceof NotFoundError) {
+    /* unknown address */
+  }
 }
 ```

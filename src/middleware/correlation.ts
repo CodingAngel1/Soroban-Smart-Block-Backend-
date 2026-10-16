@@ -9,36 +9,44 @@
  * - Stores context in `traceStorage` (AsyncLocalStorage) so the logger picks it up
  *   without needing explicit passing.
  */
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
 import type { Request, Response, NextFunction } from 'express';
 import { trace } from '@opentelemetry/api';
-import axios from 'axios';
+import axios, { type InternalAxiosRequestConfig } from 'axios';
 
 export interface TraceContext {
   requestId: string;
   traceId: string;
   spanId: string;
+  ledgerSequence?: number;
 }
 
 export const traceStorage = new AsyncLocalStorage<TraceContext>();
 
 // Propagate X-Request-Id to outgoing HTTP requests via Axios interceptor.
 // Optional chaining keeps module load safe when axios is mocked in tests.
-axios.interceptors?.request?.use?.(
-  (config) => {
-    const ctx = traceStorage.getStore();
-    if (ctx?.requestId) {
-      config.headers = config.headers || ({} as typeof config.headers);
-      // Axios v1 headers can be accessed as config.headers[name]
-      config.headers['X-Request-Id'] = ctx.requestId;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  },
-);
+axios.interceptors?.request?.use?.(propagateRequestContext, (error) => {
+  return Promise.reject(error);
+});
+
+export function propagateRequestContext(config: InternalAxiosRequestConfig) {
+  const ctx = traceStorage.getStore();
+  if (!ctx) return config;
+
+  config.headers = config.headers || ({} as typeof config.headers);
+  if (ctx.requestId) config.headers['X-Request-Id'] = ctx.requestId;
+
+  const traceId =
+    /^[0-9a-f]{32}$/i.test(ctx.traceId) || /^[0-9a-f]{16}$/i.test(ctx.traceId)
+      ? ctx.traceId.padStart(32, '0')
+      : '';
+  if (traceId && /^[0-9a-f]{16}$/i.test(ctx.spanId)) {
+    config.headers.traceparent = `00-${traceId}-${ctx.spanId}-01`;
+  }
+
+  return config;
+}
 
 export function correlationMiddleware(req: Request, res: Response, next: NextFunction): void {
   const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
@@ -56,6 +64,9 @@ export function correlationMiddleware(req: Request, res: Response, next: NextFun
       spanId = spanId || sc.spanId;
     }
   }
+
+  traceId = traceId || randomBytes(16).toString('hex');
+  spanId = spanId || randomBytes(8).toString('hex');
 
   // Annotate the active OTel span with requestId for cross-signal correlation.
   const activeSpan = trace.getActiveSpan();

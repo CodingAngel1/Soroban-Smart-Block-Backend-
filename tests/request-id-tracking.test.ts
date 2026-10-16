@@ -11,7 +11,12 @@
 
 import { describe, it, expect, vi, type Mock } from 'vitest';
 import { Request, Response, NextFunction } from 'express';
-import { correlationMiddleware, traceStorage } from '../src/middleware/correlation';
+import { AxiosHeaders, type InternalAxiosRequestConfig } from 'axios';
+import {
+  correlationMiddleware,
+  propagateRequestContext,
+  traceStorage,
+} from '../src/middleware/correlation';
 import { logger } from '../src/logger';
 
 // Mock logger to capture logs
@@ -114,8 +119,8 @@ describe('Request ID Tracking', () => {
 
       correlationMiddleware(req, res, next);
 
-      expect(req.traceId).toBeDefined();
-      expect(req.spanId).toBeDefined();
+      expect(req.traceId).toMatch(/^[0-9a-f]{32}$/i);
+      expect(req.spanId).toMatch(/^[0-9a-f]{16}$/i);
     });
 
     it('respects upstream B3 headers', () => {
@@ -175,6 +180,24 @@ describe('Request ID Tracking', () => {
 
         correlationMiddleware(req, res, next);
       });
+    });
+
+    it('propagates request and W3C trace IDs to Axios requests', () => {
+      const context = {
+        requestId: 'request-42',
+        traceId: '1234567890abcdef',
+        spanId: 'abcdef1234567890',
+      };
+      const config = {
+        headers: AxiosHeaders.from({}),
+      } as InternalAxiosRequestConfig;
+
+      traceStorage.run(context, () => propagateRequestContext(config));
+
+      expect(config.headers.get('X-Request-Id')).toBe('request-42');
+      expect(config.headers.get('traceparent')).toBe(
+        '00-00000000000000001234567890abcdef-abcdef1234567890-01',
+      );
     });
   });
 

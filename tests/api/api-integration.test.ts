@@ -41,6 +41,7 @@ vi.mock('../../src/indexer/bn254-tracker', () => ({
 import { prismaRead as prisma } from '../../src/db';
 import { transactionRouter } from '../../src/api/transactions';
 import { eventRouter } from '../../src/api/events';
+import { createCursorScope, encodeOpaqueCursor } from '../../src/utils/opaque-cursor';
 
 // ── Test server setup ─────────────────────────────────────────────────────────
 
@@ -79,6 +80,7 @@ const TX_FIXTURE = {
   sourceAccount: 'GABC1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDE',
   contractAddress: 'CABC1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDE',
   functionName: 'transfer',
+  functionArgs: null,
   status: 'success',
   humanReadable: 'Transferred 100 USDC',
   feeCharged: '100',
@@ -106,6 +108,10 @@ const EVENT_FIXTURE = {
   decoded: { from: 'GA', to: 'GB', amount: '100' },
   ledgerSequence: 1000,
   ledgerCloseTime: new Date('2024-01-01T00:00:00Z'),
+  topics: [],
+  data: { raw: 'AA==' },
+  compacted: false,
+  createdAt: new Date('2024-01-01T00:00:00Z'),
 };
 
 const EVENT_FIXTURE_2 = {
@@ -214,11 +220,13 @@ describe('GET /api/v1/transactions', () => {
   });
 
   it('supports cursor-based pagination', async () => {
-    // cursor mode returns hasNext and nextCursor
     (prisma.transaction.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([TX_FIXTURE]);
-    (prisma.transaction.findFirst as ReturnType<typeof vi.fn>)?.mockResolvedValue(null);
+    const scope = createCursorScope('transactions', { limit: 1 });
+    const cursor = encodeOpaqueCursor({ ledgerSequence: 2000, id: 'cuid-start' }, scope);
 
-    const res = await fetch(`${baseUrl}/api/v1/transactions?cursor=2000&limit=1`);
+    const res = await fetch(
+      `${baseUrl}/api/v1/transactions?${new URLSearchParams({ cursor, limit: '1' })}`,
+    );
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -277,6 +285,7 @@ describe('GET /api/v1/transactions/:hash', () => {
     expect(res.status).toBe(200);
     expect(body.events).toHaveLength(0);
   });
+
 });
 
 // ── GET /api/v1/events ────────────────────────────────────────────────────────
@@ -391,4 +400,5 @@ describe('GET /api/v1/events', () => {
     expect(event).toHaveProperty('ledgerSequence');
     expect(event).toHaveProperty('ledgerCloseTime');
   });
+
 });

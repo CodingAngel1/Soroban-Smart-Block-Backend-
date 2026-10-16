@@ -757,6 +757,21 @@ agentRouter.get(
  *         schema: { type: string }
  *     responses:
  *       200: { description: Verification status with node results }
+ */
+// ── Verification ──────────────────────────────────────────────────────
+
+agentRouter.get(
+  '/verification/:executionId',
+  optionalAuth,
+  asyncHandler(async (req: Request, res: Response) => {
+    const status = await verificationNetwork.getVerificationStatus(req.params.executionId);
+    res.json(status);
+  }),
+);
+
+/**
+ * @swagger
+ * /agents/verification/{executionId}/verify:
  *   post:
  *     tags: [Agents]
  *     summary: Submit a verification result for an execution trace
@@ -778,17 +793,6 @@ agentRouter.get(
  *     responses:
  *       200: { description: Verification result (match/mismatch) }
  */
-// ── Verification ──────────────────────────────────────────────────────
-
-agentRouter.get(
-  '/verification/:executionId',
-  optionalAuth,
-  asyncHandler(async (req: Request, res: Response) => {
-    const status = await verificationNetwork.getVerificationStatus(req.params.executionId);
-    res.json(status);
-  }),
-);
-
 agentRouter.post(
   '/verification/:executionId/verify',
   requireAuth,

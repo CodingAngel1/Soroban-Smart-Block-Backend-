@@ -1,0 +1,74 @@
+const lintDebtBaseline = require('./scripts/lint-debt-baseline.json');
+
+const legacySourceFiles = Object.entries(lintDebtBaseline.warnings)
+  .filter(
+    ([file, rules]) =>
+      file.startsWith('src/') &&
+      (rules['@typescript-eslint/no-explicit-any'] ||
+        rules['@typescript-eslint/no-non-null-assertion']),
+  )
+  .map(([file]) => file);
+
+module.exports = {
+  root: true,
+  parser: '@typescript-eslint/parser',
+  plugins: ['@typescript-eslint', 'unused-imports', 'error-handling'],
+  extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
+  env: {
+    node: true,
+    es2020: true,
+  },
+  parserOptions: {
+    ecmaVersion: 2020,
+    sourceType: 'module',
+  },
+  rules: {
+    '@typescript-eslint/no-explicit-any': 'warn',
+    '@typescript-eslint/no-unused-vars': 'off',
+    'unused-imports/no-unused-imports': 'error',
+    'unused-imports/no-unused-vars': [
+      'warn',
+      {
+        vars: 'all',
+        varsIgnorePattern: '^_',
+        args: 'after-used',
+        argsIgnorePattern: '^_',
+      },
+    ],
+    'no-console': 'error',
+    'prefer-const': 'error',
+    'no-var': 'error',
+    'error-handling/require-async-handler': 'error',
+    'error-handling/no-phantom-prisma-field': 'warn',
+  },
+  ignorePatterns: ['dist/', 'node_modules/'],
+  overrides: [
+    {
+      files: ['src/**/*.ts'],
+      rules: {
+        '@typescript-eslint/no-explicit-any': 'error',
+        '@typescript-eslint/no-non-null-assertion': 'error',
+        'no-console': 'error',
+      },
+    },
+    {
+      files: legacySourceFiles,
+      rules: {
+        '@typescript-eslint/no-explicit-any': 'warn',
+        '@typescript-eslint/no-non-null-assertion': 'warn',
+      },
+    },
+    {
+      files: ['tests/load/*.ts', 'tests/fixtures/*.ts', 'src/benchmarks/**/*.ts'],
+      rules: {
+        'no-console': 'off',
+      },
+    },
+    {
+      files: ['tests/**/*.test.ts'],
+      rules: {
+        'error-handling/require-async-handler': 'off',
+      },
+    },
+  ],
+};
