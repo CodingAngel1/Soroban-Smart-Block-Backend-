@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { config } from '../config';
 import { getProfile, type NetworkName } from '../profiles';
 
 const VALID_NETWORKS = new Set<NetworkName>(['mainnet', 'testnet', 'devnet']);
@@ -19,6 +20,8 @@ const VALID_NETWORKS = new Set<NetworkName>(['mainnet', 'testnet', 'devnet']);
  * Responds 400 if an explicit `X-Network` value is unrecognised.
  */
 export function networkRouter(req: Request, res: Response, next: NextFunction): void {
+  const activeProfile = getProfile(config.stellarNetwork);
+
   // 1. Explicit header takes highest precedence
   const headerValue = (req.headers['x-network'] as string | undefined)?.toLowerCase().trim();
   if (headerValue) {
@@ -28,10 +31,15 @@ export function networkRouter(req: Request, res: Response, next: NextFunction): 
       });
       return;
     }
-    const profile = getProfile(headerValue);
-    req.network = profile.name;
-    req.networkProfile = profile;
-    res.setHeader('X-Network', profile.name);
+    if (headerValue !== activeProfile.name) {
+      res.status(400).json({
+        error: `This API instance serves ${activeProfile.name}; route ${headerValue} requests to the matching network instance.`,
+      });
+      return;
+    }
+    req.network = activeProfile.name;
+    req.networkProfile = activeProfile;
+    res.setHeader('X-Network', activeProfile.name);
     return next();
   }
 
@@ -40,19 +48,22 @@ export function networkRouter(req: Request, res: Response, next: NextFunction): 
   const subdomain = host.split('.')[0] ?? '';
   for (const net of VALID_NETWORKS) {
     if (subdomain === net || subdomain.startsWith(`${net}-`)) {
-      const profile = getProfile(net);
-      req.network = profile.name;
-      req.networkProfile = profile;
-      res.setHeader('X-Network', profile.name);
+      if (net !== activeProfile.name) {
+        res.status(421).json({
+          error: `This API instance serves ${activeProfile.name}; route ${net} requests to the matching network instance.`,
+        });
+        return;
+      }
+      req.network = activeProfile.name;
+      req.networkProfile = activeProfile;
+      res.setHeader('X-Network', activeProfile.name);
       return next();
     }
   }
 
-  // 3. Default: use the network this server instance was started with
-  const defaultNetwork = (process.env.STELLAR_NETWORK ?? 'testnet') as NetworkName;
-  const profile = getProfile(defaultNetwork);
-  req.network = profile.name;
-  req.networkProfile = profile;
-  res.setHeader('X-Network', profile.name);
+  // 3. Default: all routes use the profile selected when this instance started.
+  req.network = activeProfile.name;
+  req.networkProfile = activeProfile;
+  res.setHeader('X-Network', activeProfile.name);
   next();
 }

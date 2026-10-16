@@ -111,4 +111,37 @@ describe('requireKeyTier — tier enforcement on protected compute routes', () =
     requireKeyTier('developer')(req, res, next);
     expect(next).toHaveBeenCalled();
   });
+
+  it.each([
+    ['unauthenticated', 'free', false],
+    ['free', 'free', true],
+    ['free', 'developer', false],
+    ['free', 'pro', false],
+    ['free', 'enterprise', false],
+    ['developer', 'free', true],
+    ['developer', 'developer', true],
+    ['developer', 'pro', false],
+    ['developer', 'enterprise', false],
+    ['pro', 'free', true],
+    ['pro', 'developer', true],
+    ['pro', 'pro', true],
+    ['pro', 'enterprise', false],
+    ['enterprise', 'free', true],
+    ['enterprise', 'developer', true],
+    ['enterprise', 'pro', true],
+    ['enterprise', 'enterprise', true],
+  ] as const)('tier matrix: %s requesting %s access is allowed=%s', (tier, minimum, allowed) => {
+    const apiKey =
+      tier === 'unauthenticated'
+        ? undefined
+        : ({ id: 'k', keyName: 'k', developerId: 'd', tier } as ApiKeyContext);
+    const { res, status } = makeRes();
+    const matrixNext = vi.fn() as NextFunction;
+
+    requireKeyTier(minimum)(makeReq(apiKey), res, matrixNext);
+
+    expect(matrixNext).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    expect(status).toHaveBeenCalledTimes(allowed ? 0 : 1);
+    if (!allowed) expect(status).toHaveBeenCalledWith(403);
+  });
 });

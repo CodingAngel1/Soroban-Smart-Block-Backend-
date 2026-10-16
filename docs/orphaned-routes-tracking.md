@@ -1,80 +1,26 @@
-# Orphaned Routes Reduction Tracker
+# Router Registry Status
 
-Tracks the effort to mount or delete router files in `src/api/` that are
-neither mounted (directly or transitively) in `src/api/router.ts` nor
-allowlisted in `scripts/validate-routes.ts` (`PENDING_SCHEMA_ROUTERS`).
+Router counts are intentionally not copied into this document. The validator
+is the source of truth and prints the current mounted, pending-schema, orphaned,
+and conflicting route counts:
 
-## Enforcement
+```bash
+npm run validate-routes
+```
 
-- CI runs `npm run validate-routes:ci` (`--max-orphans 0`) on every push/PR.
-- CI fails when **orphaned routers > 0** or when **exact route conflicts** exist.
-- The validator follows relative imports transitively from `router.ts`, so
-  routers composed inside other routers count as mounted.
-- Budget is defined in `package.json` (`validate-routes:ci`) and `scripts/validate-routes.ts` (`ORPHANED_ROUTER_BUDGET`).
-- Run locally: `npm run validate-routes` or `npm run validate-routes:ci` (both enforce budget 0).
+The strict zero-orphan budget command is:
 
-## Current status (2026-09-28)
+```bash
+npm run validate-routes:ci
+```
 
-| Metric                       | Count |
-| ---------------------------- | ----- |
-| Mounted routers              | 123   |
-| Pending-schema (allowlisted) | 15    |
-| **Orphaned routers**         | **0** |
-| Exact route conflicts        | 0     |
-| CI budget                    | 0     |
+The allowed orphan count is set by the `validate-routes:ci` script in
+`package.json` and `ORPHANED_ROUTER_BUDGET` in
+`scripts/validate-routes.ts`. This command also fails on exact route conflicts
+and stale pending-schema allowlist entries. If validation fails, use its
+reported file and route lists to resolve the current issues; do not update
+hand-maintained counts here.
 
-## Orphaned routers — mount or delete
-
-Each entry below must be either mounted in `src/api/router.ts` or deleted.
-Update this list and the count above after every change.
-
-| Router file          | Decision | Status |
-| -------------------- | -------- | ------ |
-| `agents.ts`          |          |        |
-| `analytics-query.ts` |          |        |
-| `dashboards.ts`      |          |        |
-| `flash-loans.ts`     |          |        |
-| `forecast.ts`        |          |        |
-| `freeze.ts`          |          |        |
-| `gas.ts`             |          |        |
-| `identity.ts`        |          |        |
-| `predict.ts`         |          |        |
-| `propagation.ts`     |          |        |
-| `ramp.ts`            |          |        |
-| `sandwich.ts`        |          |        |
-| `sdks.ts`            |          |        |
-| `search-routes.ts`   |          |        |
-| `token-holders.ts`   |          |        |
-
-## Resolved (2026-08-24)
-
-- **Validator accuracy**: mounted detection now follows imports transitively
-  from `router.ts`. Previously it only scanned direct imports, falsely
-  flagging 7 sub-mounted routers as orphans (`audit-anchor`, `audit-auditors`,
-  `audit-bot-router`, `audit-embed`, `audit-incidents`, `audit-verify`,
-  `contract-audit`).
-- **Missing import fixed**: `router.ts` called `router.use('/governance',
-governanceRouter)` without importing it — a latent crash and a false orphan.
-- **Duplicate mounts removed**: `/network` and `/market` were each mounted
-  twice in `router.ts`; the duplicates were deleted (exact route conflicts are
-  now 0).
-- **Stale allowlist cleaned**: 24 entries removed from `PENDING_SCHEMA_ROUTERS`
-  for routers that are mounted (audit family, emergency family, `abi`,
-  `archive`, and the earlier batch).
-- **Stale allowlist cleanup & CI enforcement (#1110)**: 14 mounted entries removed from
-  `PENDING_SCHEMA_ROUTERS` (`advanced-events`, `assets`, `authMultisig`, `authProfile`,
-  `authWebhooks`, `commodity-compliance`, `dtcc-settlement`, `factory-tracker`,
-  `oracle-audit`, `oracle-feeds`, `rwa-compliance`, `settlement-batch`,
-  `storage-trap`, `storage`). `scripts/validate-routes.ts` now fails CI if any
-  mounted router reappears in `PENDING_SCHEMA_ROUTERS`.
-
-## Cleanup sprint checklist
-
-1. [ ] Triage the 15 orphans: mount the ones with implemented handlers, delete
-       dead scaffolding (empty routers / stubs).
-2. [ ] Re-run `npm run validate-routes:ci` until green (orphans ≤ 15).
-3. [ ] Remove any newly-mounted routers from `PENDING_SCHEMA_ROUTERS` if they
-       were allowlisted.
-4. [ ] Lower `--max-orphans` in `package.json` (15 → 10 → 5 → 3 → 1 → 0) as
-       orphans are resolved, keeping CI red until the next target is met.
-5. [ ] Update this tracker's status table after each batch.
+The README's architecture and CI sections link to the commands that produce
+live counts. `npm run docs:check` guards those sections against reintroducing
+stale, hard-coded counts.

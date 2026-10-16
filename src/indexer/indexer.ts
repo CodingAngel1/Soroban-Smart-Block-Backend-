@@ -3,6 +3,7 @@ import { realtimeHub } from '../realtime/eventHub';
 import { xdr } from '@stellar/stellar-sdk';
 import { prismaRead, prismaWrite, prismaWrite as prisma } from '../db';
 import { config } from '../config';
+import { recordIndexerFreshness } from './freshness';
 import {
   indexerPipelineStageDuration,
   indexerPipelineStageLag,
@@ -42,7 +43,7 @@ const WORKERS = config.indexerCatchupWorkers;
 // IndexerState helpers & High Availability (HA) Leader Election
 // ---------------------------------------------------------------------------
 
-const getActiveNetwork = (): string => process.env.STELLAR_NETWORK ?? 'mainnet';
+const getActiveNetwork = (): string => config.stellarNetwork;
 
 export async function getLastIndexedLedger(network = getActiveNetwork()): Promise<number> {
   if (isP2pEnabled()) {
@@ -75,6 +76,7 @@ export async function setLastIndexedLedger(
 ): Promise<void> {
   if (isP2pEnabled()) {
     await setRangeCursor(ledger, ledger);
+    await refreshIndexerFreshness(ledger, network);
     return;
   }
 
@@ -92,6 +94,7 @@ export async function setLastIndexedLedger(
         version: 1,
       },
     });
+    await refreshIndexerFreshness(ledger, network);
     return;
   }
 
@@ -117,6 +120,29 @@ export async function setLastIndexedLedger(
       where: { network, id: 'singleton' },
       data: { lastLedger: ledger, version: { increment: 1 } },
     });
+  }
+
+  await refreshIndexerFreshness(ledger, network);
+}
+
+async function refreshIndexerFreshness(ledger: number, network: string): Promise<void> {
+  try {
+    const indexedLedger = await prismaWrite.ledger.findUnique({
+      where: { sequence: ledger },
+      select: { closeTime: true },
+    });
+    if (!indexedLedger) {
+      logger.warn(`[indexer] freshness metrics not updated: ledger ${ledger} is not persisted`);
+      return;
+    }
+
+    const networkTip = await getLatestLedger().catch((error: unknown): undefined => {
+      logger.warn('[indexer] unable to refresh ledger-lag metric from RPC', { error });
+      return undefined;
+    });
+    recordIndexerFreshness(network, ledger, indexedLedger.closeTime, networkTip);
+  } catch (error) {
+    logger.warn('[indexer] unable to refresh indexer freshness metrics', { error });
   }
 }
 
@@ -863,6 +889,7 @@ function sleep(ms: number) {
 }
 
 let currentWorker: SorobanEventWorker | null = null;
+let currentWorkerTask: Promise<void> | null = null;
 
 export async function runIndexer() {
   await startIndexerService();
@@ -871,17 +898,20 @@ export async function runIndexer() {
 export async function startIndexerService() {
   const worker = new SorobanEventWorker();
   currentWorker = worker;
-  await worker.start();
   // Match newly indexed contracts/events against stored saved searches (#966).
   startSavedSearchScheduler();
+  currentWorkerTask = worker.start();
+  await currentWorkerTask;
 }
 
-export function stopIndexerService(): void {
+export async function stopIndexerService(): Promise<void> {
   stopSavedSearchScheduler();
   if (currentWorker) {
     currentWorker.stop();
-    currentWorker = null;
   }
+  await currentWorkerTask;
+  currentWorker = null;
+  currentWorkerTask = null;
 }
 
 export class SorobanEventWorker {
