@@ -1,7 +1,8 @@
 # Runbook: Health Probe Endpoints
 
 **Issue**: #918  
-**Endpoints**: `/healthz`, `/livez`, `/readyz`, `/health`
+**Endpoints**: `/healthz`, `/livez`, `/readyz`, `/health`,
+`/health/dependencies` (`/health/detailed` compatibility alias)
 
 ---
 
@@ -57,6 +58,7 @@ curl -s http://localhost:3000/metrics | grep health_probe
 The container may restart.
 
 **Diagnosis**:
+
 ```bash
 # Check what the current healthcheck command is
 docker inspect <container> | jq '.[0].Config.Healthcheck'
@@ -73,6 +75,7 @@ docker inspect --format='{{json .State.Health}}' <container> | jq .
 ```
 
 **Resolution**:
+
 1. If running an old image: rebuild and redeploy with the new Dockerfile.
 2. If the process is shutting down legitimately: `503` is correct behavior; wait for
    the replacement container to start.
@@ -93,18 +96,21 @@ the database is unreachable. This is correct liveness behavior — the process s
 not be restarted due to a DB outage.
 
 **Check readiness** (this is what load-balancers and k8s readiness probes use):
+
 ```bash
 curl -s http://localhost:3000/readyz | jq .
 # If not_ready, check .blockers for the failing dependency
 ```
 
 **Check detailed live health** (actual DB + RPC ping):
+
 ```bash
 curl -s http://localhost:3000/health/detailed | jq .dependencies
 ```
 
 **In k8s**: The `readinessProbe` on `/readyz` will already have removed the pod from
 the load-balancer rotation. Check pod readiness:
+
 ```bash
 kubectl get pods
 kubectl describe pod <pod-name>
@@ -113,6 +119,7 @@ kubectl describe pod <pod-name>
 **In Docker Compose**: The indexer `depends_on: api-testnet: condition: service_healthy`
 uses the healthcheck on `api-testnet`, which is now `/healthz`. If you need readiness
 ordering based on DB availability, add a separate readiness check:
+
 ```bash
 # Wait for the API to be ready (DB + all deps)
 until curl -sf http://localhost:3000/readyz; do sleep 2; done
@@ -125,6 +132,7 @@ until curl -sf http://localhost:3000/readyz; do sleep 2; done
 **Symptom**: `curl -s http://localhost:3000/readyz` returns `503`.
 
 **Diagnosis**:
+
 ```bash
 # Check which dependencies are blocking
 curl -s http://localhost:3000/readyz | jq '{status,blockers}'
@@ -142,6 +150,7 @@ curl -s http://localhost:3000/health/detailed | jq .dependencies
 ```
 
 **Recovery**:
+
 - `db` blocker: ensure PostgreSQL is running and the `DATABASE_URL` is correct.
   The readiness state auto-recovers once `markReady('db')` is called after a
   successful DB check.
@@ -160,11 +169,13 @@ the p99 crossing the 10ms budget. CI benchmark `tests/healthz-benchmark.test.ts`
 
 **Cause**: `/healthz` should only run `getLivenessStatus()` which reads `Date.now()` and
 `process.uptime()`. High latency indicates:
+
 - Event loop blockage by another request handler
 - V8 GC pause (check `nodejs_gc_duration_seconds_sum` in `/metrics`)
 - CPU starvation (container resource limits too tight)
 
 **Diagnosis**:
+
 ```bash
 # Check event loop lag
 curl -s http://localhost:3000/metrics | grep nodejs_eventloop_lag
@@ -180,10 +191,10 @@ docker stats <container> --no-stream
 
 ## Configuration Reference
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `HEALTH_PROBE_DEPENDENCIES` | `true` | When `false`, `/readyz` relies solely on in-memory readiness state without active probing. `/healthz` is always I/O-free regardless of this flag. |
-| `HEALTHZ_LATENCY_P99_BUDGET_MS` | `10` | p99 latency ceiling (ms) enforced by the `/healthz` benchmark CI test. |
+| Variable                        | Default | Description                                                                                                                                       |
+| ------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HEALTH_PROBE_DEPENDENCIES`     | `true`  | When `false`, `/readyz` relies solely on in-memory readiness state without active probing. `/healthz` is always I/O-free regardless of this flag. |
+| `HEALTHZ_LATENCY_P99_BUDGET_MS` | `10`    | p99 latency ceiling (ms) enforced by the `/healthz` benchmark CI test.                                                                            |
 
 ---
 
@@ -192,6 +203,7 @@ docker stats <container> --no-stream
 **Default**: `true` (enabled)
 
 When set to `false`:
+
 - `/readyz` reads the in-memory `readiness.ts` state but does not perform active
   dependency probing in the probe path.
 - This is the correct setting for deployments where readiness state is managed
@@ -211,16 +223,17 @@ docker compose up --env-file .env.local
 
 ## SLO Targets
 
-| Probe | Availability SLO | Latency SLO (p99) |
-|-------|-----------------|-------------------|
-| `/healthz` | 99.9% | < 10ms |
-| `/readyz` | 99.5% | < 50ms |
-| `/health` | 99.0% | < 200ms |
+| Probe      | Availability SLO | Latency SLO (p99) |
+| ---------- | ---------------- | ----------------- |
+| `/healthz` | 99.9%            | < 10ms            |
+| `/readyz`  | 99.5%            | < 50ms            |
+| `/health`  | 99.0%            | < 200ms           |
 
 Dashboards: query `health_probe_requests_total` and `health_probe_duration_seconds`
 from Prometheus/Grafana.
 
 Error budget alert (Prometheus example):
+
 ```yaml
 - alert: HealthzProbeLatencyHigh
   expr: histogram_quantile(0.99, rate(health_probe_duration_seconds_bucket{endpoint="/healthz"}[5m])) > 0.01
@@ -228,5 +241,5 @@ Error budget alert (Prometheus example):
   labels:
     severity: warning
   annotations:
-    summary: "/healthz p99 latency exceeds 10ms budget"
+    summary: '/healthz p99 latency exceeds 10ms budget'
 ```

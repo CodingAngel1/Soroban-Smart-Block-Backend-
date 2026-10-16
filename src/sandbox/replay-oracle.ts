@@ -1,4 +1,5 @@
 import { prismaRead } from '../db';
+import { config } from '../config';
 import type { SandboxEngine } from './runtime';
 
 export interface ReplayComparison {
@@ -45,7 +46,7 @@ export const UNSUPPORTED_HOST_FUNCTIONS = new Set([
 
 export async function replayMainnet(txHash: string): Promise<ReplayResult> {
   const tx = await prismaRead.transaction.findUnique({
-    where: { hash: txHash },
+    where: { network_hash: { network: config.stellarNetwork, hash: txHash } },
     include: {
       operations: {
         orderBy: { index: 'asc' },

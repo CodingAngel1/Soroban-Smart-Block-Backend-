@@ -17,6 +17,7 @@ export interface NetworkProfile {
 
   // ── Stellar RPC ──────────────────────────────────────────────────────────
   rpcUrl: string;
+  rpcFallbackUrls: string[];
   rpcWsUrl: string;
   horizonUrl: string;
   networkPassphrase: string;
@@ -40,6 +41,7 @@ const PROFILES: Record<NetworkName, NetworkProfile> = {
     name: 'testnet',
     // Empty env vars mean "not configured" — fall back to the next default.
     rpcUrl: process.env.TESTNET_RPC_URL || 'https://soroban-testnet.stellar.org',
+    rpcFallbackUrls: parseEndpointList(process.env.TESTNET_RPC_FALLBACK_URLS),
     rpcWsUrl: process.env.TESTNET_RPC_WS_URL || 'wss://soroban-testnet.stellar.org',
     horizonUrl: process.env.TESTNET_HORIZON_URL || 'https://horizon-testnet.stellar.org',
     networkPassphrase: process.env.TESTNET_PASSPHRASE || 'Test SDF Network ; September 2015',
@@ -57,6 +59,7 @@ const PROFILES: Record<NetworkName, NetworkProfile> = {
   mainnet: {
     name: 'mainnet',
     rpcUrl: process.env.MAINNET_RPC_URL || '',
+    rpcFallbackUrls: parseEndpointList(process.env.MAINNET_RPC_FALLBACK_URLS),
     rpcWsUrl: process.env.MAINNET_RPC_WS_URL || '',
     horizonUrl: process.env.MAINNET_HORIZON_URL || 'https://horizon.stellar.org',
     networkPassphrase:
@@ -71,6 +74,7 @@ const PROFILES: Record<NetworkName, NetworkProfile> = {
   devnet: {
     name: 'devnet',
     rpcUrl: process.env.DEVNET_RPC_URL || 'http://localhost:8000/soroban/rpc',
+    rpcFallbackUrls: parseEndpointList(process.env.DEVNET_RPC_FALLBACK_URLS),
     rpcWsUrl: process.env.DEVNET_RPC_WS_URL || 'ws://localhost:8000/soroban/rpc',
     horizonUrl: process.env.DEVNET_HORIZON_URL || 'http://localhost:8000',
     networkPassphrase: process.env.DEVNET_PASSPHRASE || 'Standalone Network ; February 2017',
@@ -86,6 +90,13 @@ const PROFILES: Record<NetworkName, NetworkProfile> = {
     cacheMode: (process.env.DEVNET_CACHE_MODE || 'standalone') as CacheMode,
   },
 };
+
+function parseEndpointList(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean);
+}
 
 // ─── Profile validation ───────────────────────────────────────────────────────
 
@@ -126,6 +137,11 @@ export function validateProfile(profile: NetworkProfile): void {
       `[${name}] networkPassphrase is required. Set ${name.toUpperCase()}_PASSPHRASE.`,
     );
   }
+  if (networkPassphrase !== NETWORK_PASSPHRASES[name]) {
+    throw new Error(
+      `[${name}] networkPassphrase does not match the canonical ${name} network passphrase.`,
+    );
+  }
 
   // ── URL protocol validation ───────────────────────────────────────────────
   if (!isDbUrl(databaseUrl)) {
@@ -137,6 +153,23 @@ export function validateProfile(profile: NetworkProfile): void {
     throw new Error(
       `[${name}] rpcUrl must begin with https:// or http://, got: "${rpcUrl.slice(0, 30)}"`,
     );
+  }
+  if (profile.rpcFallbackUrls.length > 5) {
+    throw new Error(`[${name}] At most five RPC fallback URLs may be configured.`);
+  }
+  for (const fallbackUrl of profile.rpcFallbackUrls) {
+    if (!isHttpUrl(fallbackUrl)) {
+      throw new Error(`[${name}] RPC fallback URLs must begin with https:// or http://.`);
+    }
+    if (fallbackUrl === rpcUrl) {
+      throw new Error(`[${name}] RPC fallback URLs must not repeat the primary RPC URL.`);
+    }
+    if (name !== 'devnet' && fallbackUrl.startsWith('http://')) {
+      throw new Error(`[${name}] Insecure HTTP RPC fallback URLs are only allowed on devnet.`);
+    }
+    if (name === 'mainnet' && fallbackUrl.includes('testnet')) {
+      throw new Error(`[mainnet] RPC fallback URL appears to point to testnet infrastructure.`);
+    }
   }
   if (!isWsUrl(rpcWsUrl)) {
     throw new Error(

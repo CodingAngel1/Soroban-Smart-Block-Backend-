@@ -62,6 +62,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check documented counts and budgets
+        run: npm run docs:check
+
+      - name: Enforce per-file TypeScript error budget
+        run: npm run typecheck:budget:ci
+
+      - name: Enforce ESLint warning and debt budgets
+        run: npm run lint:budget:ci
+
       - name: Apply schema migrations for PostgreSQL integration tests
         run: npx prisma migrate deploy
         env:
@@ -164,6 +173,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate OpenAPI request and response examples
+        run: npm run openapi:check-examples
+
       - name: Generated SDKs match the OpenAPI spec (drift gate)
         run: npm run sdk:check
 
@@ -183,6 +195,11 @@ jobs:
           PORT=3000 npx ts-node --transpile-only src/index.ts > api.log 2>&1 &
           for i in $(seq 1 60); do curl -sf localhost:3000/livez && exit 0; sleep 2; done
           cat api.log; exit 1
+
+      - name: Smoke-test API against the migrated PostgreSQL database
+        run: |
+          EXPECTED_MIGRATIONS="$(find prisma/migrations -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | node -e "let input='';process.stdin.on('data',chunk=>input+=chunk).on('end',()=>console.log(JSON.stringify(input.trim().split('\\n').filter(Boolean))))")"
+          EXPECTED_MIGRATIONS="$EXPECTED_MIGRATIONS" npx ts-node --transpile-only src/deployment-smoke.ts
 
       - name: Run TypeScript quickstart against the live API
         run: npx ts-node --transpile-only packages/client/examples/quickstart.ts
@@ -223,7 +240,7 @@ jobs:
           promtool --version
 
       - name: Validate Prometheus alert rules
-        run: promtool check rules prometheus/alerts.yml
+        run: promtool check rules prometheus/alerts.yml prometheus/stellar-rpc-alerts.yml
 
   # #1036: Postman collection + SDK bundle are generated from the mounted
   # routes; drift against src/api/router.ts fails the build.
@@ -250,6 +267,15 @@ jobs:
           name: client-artifacts
           path: artifacts/
           retention-days: 30
+
+  runtime-security:
+    name: Runtime Container Privileges
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Verify runtime privilege restrictions
+        run: bash scripts/verify-runtime-privileges.sh
 
   security:
     name: Security

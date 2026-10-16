@@ -1,5 +1,6 @@
 import { GraphQLError } from 'graphql';
 import type { GraphQLContext } from './context';
+import { config } from '../config';
 
 const MAX_LIMIT = 100;
 const DEFAULT_PAGE_LIMIT = 20;
@@ -380,7 +381,11 @@ export const resolvers = {
       return { address: args.address };
     },
     ledger(_parent: unknown, args: { sequence: number }, ctx: GraphQLContext) {
-      return ctx.prisma.ledger.findUnique({ where: { sequence: args.sequence } });
+      return ctx.prisma.ledger.findUnique({
+        where: {
+          network_sequence: { network: config.stellarNetwork, sequence: args.sequence },
+        },
+      });
     },
   },
 

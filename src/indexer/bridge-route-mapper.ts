@@ -1,4 +1,5 @@
 import { prismaRead as prisma } from '../db';
+import { config } from '../config';
 
 export interface BridgeRoute {
   transactionHash: string;
@@ -39,7 +40,7 @@ const EXTERNAL_SCANNERS: Record<string, string> = {
  */
 export async function analyzeBridgeRoute(transactionHash: string): Promise<BridgeRoute | null> {
   const transaction = await prisma.transaction.findUnique({
-    where: { hash: transactionHash },
+    where: { network_hash: { network: config.stellarNetwork, hash: transactionHash } },
     include: { events: true, contract: true },
   });
 
@@ -150,7 +151,7 @@ function generateScannerUrl(
  */
 export async function storeBridgeRoute(transactionHash: string, route: BridgeRoute): Promise<void> {
   const existing = await prisma.transaction.findUnique({
-    where: { hash: transactionHash },
+    where: { network_hash: { network: config.stellarNetwork, hash: transactionHash } },
     select: { functionArgs: true },
   });
 
@@ -158,7 +159,7 @@ export async function storeBridgeRoute(transactionHash: string, route: BridgeRou
   const baseArgs = typeof existingArgs === 'object' && existingArgs !== null ? existingArgs : {};
 
   await prisma.transaction.update({
-    where: { hash: transactionHash },
+    where: { network_hash: { network: config.stellarNetwork, hash: transactionHash } },
     data: {
       functionArgs: {
         ...baseArgs,

@@ -8,9 +8,12 @@ import type { Socket } from 'net';
 
 import { createApp } from './app';
 import { createHttpServer } from './server';
+import { closeHttpServerAndDrain } from './http-shutdown';
 import { initializeServices } from './services';
 import { config, assertConfig } from './config';
 import { prismaWrite as prisma, prismaRead, prismaBackfill } from './db';
+import { closeRawPool } from './db/raw';
+import { scheduler } from './scheduler/cron-scheduler';
 import { stopIndexerService } from './indexer/indexer';
 import { stopP2pNode } from './p2p';
 import { shutdownWebSocketServer } from './ws/websocketServer';
@@ -71,79 +74,66 @@ async function gracefulShutdown(signal: string): Promise<void> {
     process.exit(1);
   }, SHUTDOWN_TIMEOUT_MS);
 
-  try {
-    if (serverRef) {
-      logger.info('[shutdown] Closing HTTP server, draining connections...');
-      const closePromise = new Promise<void>((resolve) => {
-        serverRef!.close(() => {
-          logger.info('[shutdown] HTTP server closed');
-          resolve();
-        });
-      });
-
-      const connForceTimeout = setTimeout(() => {
-        if (activeConnections.size > 0) {
-          logger.warn(
-            `[shutdown] Forcing close of ${activeConnections.size} remaining active connections`,
-          );
-          for (const socket of activeConnections) {
-            socket.destroy();
-          }
-        }
-      }, 5000);
-
-      await closePromise;
-      clearTimeout(connForceTimeout);
+  let shutdownFailed = false;
+  const runShutdownStep = async (name: string, action: () => Promise<void> | void) => {
+    try {
+      await action();
+      logger.info(`[shutdown] ${name} stopped`);
+    } catch (err) {
+      shutdownFailed = true;
+      logger.error(`[shutdown] Failed to stop ${name}`, { error: String(err) });
     }
+  };
 
-    stopIndexerService();
-    stopGasAnalyticsScheduler();
-    logger.info('[shutdown] Indexer service stopped');
+  try {
+    if (wssRef) {
+      await runShutdownStep('WebSocket clients', shutdownWebSocketServer);
+    }
+    await runShutdownStep('HTTP server and in-flight requests', async () => {
+      if (serverRef) await closeHttpServerAndDrain(serverRef, activeConnections);
+      wssRef?.close();
+    });
 
-    await stopWebhookDeliveryWorker();
+    await runShutdownStep('Indexer worker', stopIndexerService);
+    await runShutdownStep('Gas analytics scheduler', stopGasAnalyticsScheduler);
+    await runShutdownStep('Webhook delivery worker', stopWebhookDeliveryWorker);
+    await runShutdownStep('Bridge worker', stopBridgeWorker);
+    await runShutdownStep('Price updater', stopPriceUpdater);
+    await runShutdownStep('Feed orchestrator', () => feedOrchestrator.shutdown());
+    await runShutdownStep('Scheduled workers', () =>
+      scheduler.gracefulShutdown(Math.max(0, SHUTDOWN_TIMEOUT_MS - 5_000)),
+    );
+    await runShutdownStep('MEV prediction publisher', stopMevPredictionPublisher);
 
     await stopP2pNode().catch((err) =>
       logger.warn('[shutdown] Error stopping p2p node', { error: String(err) }),
     );
-    logger.info('[shutdown] P2P node stopped');
-
-    if (wssRef) {
-      shutdownWebSocketServer();
-      wssRef.close();
-      logger.info('[shutdown] WebSocket server closed');
-    }
-
-    stopMevPredictionPublisher();
-    logger.info('[shutdown] MEV prediction publisher stopped');
-
-    stopBridgeWorker();
-    logger.info('[shutdown] Bridge worker stopped');
-
-    feedOrchestrator.shutdown();
-    logger.info('[shutdown] Feed orchestrator stopped');
-
-    stopPriceUpdater();
-    logger.info('[shutdown] Price updater stopped');
 
     await saveShutdownState();
     logger.info('[shutdown] State saved');
 
-    await cacheClose();
-    cacheBackendStatus.set(0);
-    logger.info('[shutdown] Cache connection closed');
-
-    await eventBus.close();
-    logger.info('[shutdown] Event bus closed');
-
-    await prismaRead.$disconnect();
-    await prisma.$disconnect();
-    await prismaBackfill.$disconnect();
-    dbConnectionStatus.set(0);
-    logger.info('[shutdown] Database connections closed');
+    await runShutdownStep('Cache connection', async () => {
+      await cacheClose();
+      cacheBackendStatus.set(0);
+    });
+    await runShutdownStep('Event bus', () => eventBus.close());
+    await runShutdownStep('Raw PostgreSQL pool', closeRawPool);
+    await runShutdownStep('Database connections', async () => {
+      await Promise.all([
+        prismaRead.$disconnect(),
+        prisma.$disconnect(),
+        prismaBackfill.$disconnect(),
+      ]);
+      dbConnectionStatus.set(0);
+    });
 
     clearTimeout(forceExit);
-    logger.info('[shutdown] Graceful shutdown complete');
-    process.exit(0);
+    logger.info(
+      shutdownFailed
+        ? '[shutdown] Shutdown completed with errors'
+        : '[shutdown] Graceful shutdown complete',
+    );
+    process.exit(shutdownFailed ? 1 : 0);
   } catch (err) {
     logger.error('[shutdown] Error during graceful shutdown', { error: String(err) });
     clearTimeout(forceExit);

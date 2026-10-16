@@ -1,4 +1,5 @@
 import { prismaWrite as prisma } from '../db';
+import { config } from '../config';
 import { EventEmitter } from 'events';
 import { logger } from '../logger';
 
@@ -80,7 +81,9 @@ export class WhaleWatcher extends EventEmitter {
     // Store alert metadata for dashboard
     try {
       await prisma.transaction.update({
-        where: { hash: alert.transactionHash },
+        where: {
+          network_hash: { network: config.stellarNetwork, hash: alert.transactionHash },
+        },
         data: {
           humanReadable: `🐋 WHALE: ${alert.amount} ${alert.asset} transferred (${alert.usdValue?.toFixed(2)} USD)`,
         },

@@ -37,6 +37,8 @@ spec:
         runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
 
       # Graceful shutdown — give the app time to drain connections (matches SHUTDOWN_TIMEOUT_MS)
       terminationGracePeriodSeconds: 40

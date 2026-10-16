@@ -24,42 +24,258 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "High HTTP 5xx error rate on {{ $labels.instance }}"
+          summary: 'High HTTP 5xx error rate on {{ $labels.instance }}'
           description: >
             The HTTP 5xx surge ratio is {{ $value | humanizePercentage }} (threshold: 1%).
             This means more than 1% of requests are returning 5xx responses over
             the last 5-minute window. Check application logs and recent deployments.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/http-5xx-surge.md"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/http-5xx-surge.md'
+
+      # API endpoint-class SLOs are defined in docs/api-slo.md.
+      - record: api:request_error_ratio:rate1h
+        expr: |
+          sum by (endpoint_class) (rate(api_slo_requests_total{outcome="bad"}[1h]))
+          /
+          clamp_min(sum by (endpoint_class) (rate(api_slo_requests_total{outcome=~"good|bad"}[1h])), 1e-9)
+
+      - record: api:request_error_ratio:rate6h
+        expr: |
+          sum by (endpoint_class) (rate(api_slo_requests_total{outcome="bad"}[6h]))
+          /
+          clamp_min(sum by (endpoint_class) (rate(api_slo_requests_total{outcome=~"good|bad"}[6h])), 1e-9)
+
+      - alert: ApiEndpointClassAvailabilityFastBurn
+        expr: api:request_error_ratio:rate1h > (14.4 * 0.005)
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "API {{ $labels.endpoint_class }} availability is burning its error budget quickly"
+          description: >
+            The {{ $labels.endpoint_class }} endpoint class has a {{ $value | humanizePercentage }}
+            server-error ratio, above the 14.4x fast-burn threshold for its 99.5% availability SLO.
+            Check service dependencies, recent deployments, and the API SLO runbook.
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiEndpointClassAvailabilitySlowBurn
+        expr: api:request_error_ratio:rate6h > (6 * 0.005)
+        for: 30m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API {{ $labels.endpoint_class }} availability is consuming its error budget"
+          description: >
+            The {{ $labels.endpoint_class }} endpoint class has a {{ $value | humanizePercentage }}
+            six-hour server-error ratio, above the 6x slow-burn threshold for its 99.5% availability SLO.
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiReadLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, endpoint_class) (rate(api_slo_request_duration_seconds_bucket{endpoint_class="read",outcome="good"}[10m]))) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API read p95 latency exceeds 250 ms"
+          description: "Read-class p95 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiWriteLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, endpoint_class) (rate(api_slo_request_duration_seconds_bucket{endpoint_class="write",outcome="good"}[10m]))) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API write p95 latency exceeds 500 ms"
+          description: "Write-class p95 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiComputeLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, endpoint_class) (rate(api_slo_request_duration_seconds_bucket{endpoint_class="compute",outcome="good"}[10m]))) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API compute p95 latency exceeds 1.5 seconds"
+          description: "Compute-class p95 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
+
+      - alert: ApiGraphqlLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le, endpoint_class) (rate(api_slo_request_duration_seconds_bucket{endpoint_class="graphql",outcome="good"}[10m]))) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API GraphQL p95 latency exceeds 500 ms"
+          description: "GraphQL-class p95 latency is {{ $value | humanizeDuration }}."
+          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/api-slo.md"
 
       # ── Indexer Ingestion Lag ────────────────────────────────────────────────
-      # Warns when the indexer falls more than 50 ledgers behind the chain tip
-      # (degraded SLA), and pages at 200 ledgers (severe lag — roughly 16 min).
+      # Mainnet and testnet ledger lag thresholds: warn above 50 ledgers for
+      # 5m, page above 200 for 2m. Devnet has separate thresholds below.
       - alert: IndexerIngestionLagWarning
-        expr: indexer_ingestion_lag_ledgers > 50
+        expr: indexer_ingestion_lag_ledgers{network=~"mainnet|testnet"} > 50
         for: 5m
         labels:
           severity: warning
           team: platform
         annotations:
-          summary: "Indexer lagging behind chain tip for {{ $labels.network }} on {{ $labels.instance }}"
+          summary: 'Indexer lagging behind chain tip on {{ $labels.instance }}'
           description: >
-            The {{ $labels.network }} indexer is {{ $value }} ledgers behind the chain tip (warning threshold: 50).
-            At ~5 second block times this is {{ $value | humanizeDuration }} of lag.
+            The indexer is {{ $value }} ledgers behind the chain tip (warning threshold: 50).
+            On mainnet/testnet this is typically several minutes of lag.
             Check indexer logs and RPC connectivity.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md'
 
       - alert: IndexerIngestionLagCritical
-        expr: indexer_ingestion_lag_ledgers > 200
+        expr: indexer_ingestion_lag_ledgers{network=~"mainnet|testnet"} > 200
         for: 2m
         labels:
           severity: critical
           team: platform
         annotations:
-          summary: "Critical indexer lag for {{ $labels.network }} on {{ $labels.instance }}"
+          summary: 'Critical indexer lag on {{ $labels.instance }}'
           description: >
             The {{ $labels.network }} indexer is {{ $value }} ledgers behind the chain tip (critical threshold: 200).
             This indicates the indexer may be stalled. Immediate investigation required.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md'
+
+      # Devnet may produce ledgers irregularly, so use wider ledger thresholds.
+      - alert: IndexerIngestionLagDevnetWarning
+        expr: indexer_ingestion_lag_ledgers{network="devnet"} > 300
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: 'Devnet indexer lagging behind chain tip on {{ $labels.instance }}'
+          description: >
+            The devnet indexer is {{ $value }} ledgers behind the chain tip
+            (warning threshold: 300). Check devnet availability and indexer logs.
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md'
+
+      - alert: IndexerIngestionLagDevnetCritical
+        expr: indexer_ingestion_lag_ledgers{network="devnet"} > 1000
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: 'Critical devnet indexer lag on {{ $labels.instance }}'
+          description: >
+            The devnet indexer is {{ $value }} ledgers behind the chain tip.
+            Check whether the local network is producing ledgers before paging.
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md'
+
+      # Freshness is measured from the close time of the last persisted ledger,
+      # not the process heartbeat, so idle polling cannot mask stale indexed data.
+      - record: indexer:freshness_age_seconds
+        expr: time() - indexer_ledger_close_timestamp_seconds
+
+      - alert: IndexerFreshnessWarning
+        expr: indexer:freshness_age_seconds{network=~"mainnet|testnet"} > 60
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: 'Indexed Stellar data is stale on {{ $labels.instance }}'
+          description: >
+            The latest indexed ledger closed {{ $value | humanizeDuration }} ago,
+            above the 60-second mainnet/testnet freshness SLO. Check RPC health,
+            ingestion lag, and database writes.
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md'
+
+      - alert: IndexerFreshnessCritical
+        expr: indexer:freshness_age_seconds{network=~"mainnet|testnet"} > 300
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: 'Indexed Stellar data has been stale for over five minutes'
+          description: >
+            The latest indexed ledger close time is {{ $value | humanizeDuration }} old.
+            The 300-second freshness objective is breached; investigate the indexer,
+            RPC and persistence path.
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md'
+
+      - alert: IndexerFreshnessDevnetWarning
+        expr: indexer:freshness_age_seconds{network="devnet"} > 1800
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: 'Devnet indexed data has been stale for 30 minutes'
+          description: >
+            Confirm the local devnet is producing ledgers before treating this as
+            an indexer incident. Devnet uses a wider freshness objective.
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md'
+
+      - alert: IndexerFreshnessDevnetCritical
+        expr: indexer:freshness_age_seconds{network="devnet"} > 3600
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: 'Devnet indexed data has been stale for over one hour'
+          description: >
+            The devnet freshness threshold is breached. Verify local ledger
+            production and RPC availability before escalating.
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md'
+
+  - name: soroban_explorer_indexer_dlq
+    interval: 30s
+    rules:
+      - alert: DeadLetterQueueOldestItemWarning
+        expr: indexer_error_dlq_oldest_age_seconds > 3600
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Oldest dead-letter item is over one hour old on {{ $labels.network }}"
+          description: >
+            The oldest item in the {{ $labels.network }} indexer dead-letter queue
+            has been waiting for {{ $value | humanizeDuration }}. Inspect the
+            network-scoped dead-letter queue and resolve the underlying failure.
+          runbook_url: "https://github.com/nnamanichikezie9/Soroban-Smart-Block-Backend-/blob/main/docs/dead-letter-queue-runbook.md"
+
+      - alert: DeadLetterQueueOldestItemCritical
+        expr: indexer_error_dlq_oldest_age_seconds > 86400
+        for: 10m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Dead-letter item has remained unresolved for over one day on {{ $labels.network }}"
+          description: >
+            The oldest item in the {{ $labels.network }} indexer dead-letter queue
+            has been waiting for {{ $value | humanizeDuration }}. The backlog is
+            stale and requires immediate operator triage.
+          runbook_url: "https://github.com/nnamanichikezie9/Soroban-Smart-Block-Backend-/blob/main/docs/dead-letter-queue-runbook.md"
+
+      - alert: DeadLetterQueueSustainedGrowth
+        expr: sum by (network) (increase(indexer_error_dlq_total[15m])) > 25
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Dead-letter queue is growing rapidly on {{ $labels.network }}"
+          description: >
+            More than 25 items were dead-lettered in each 15-minute evaluation
+            window for at least 10 minutes on {{ $labels.network }}. Group by
+            failure reason and check the indexer, RPC provider, and recent
+            decoder changes.
+          runbook_url: "https://github.com/nnamanichikezie9/Soroban-Smart-Block-Backend-/blob/main/docs/dead-letter-queue-runbook.md"
 
   - name: soroban_explorer_database
     interval: 30s
@@ -75,12 +291,12 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "Database connection is down on {{ $labels.instance }}"
+          summary: 'Database connection is down on {{ $labels.instance }}'
           description: >
             The database connection status metric is 0, indicating the primary
             PostgreSQL connection is unavailable. The API cannot serve read or
             write requests. Check DATABASE_URL, pg connection pool, and RDS/pg health.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/database-down.md"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/database-down.md'
 
       # ── Replica Lag Check Errors ─────────────────────────────────────────────
       # Fires when the replica lag checker encounters repeated errors, which
@@ -93,13 +309,13 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Replica lag check errors on {{ $labels.instance }}"
+          summary: 'Replica lag check errors on {{ $labels.instance }}'
           description: >
             {{ $value }} replica lag-check error(s) in the last 5 minutes.
             The application is falling back to the primary database for reads,
             increasing load on the write primary. Check read replica connectivity
             and TESTNET_DATABASE_URL configuration.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/replica-lag.md"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/replica-lag.md'
 
   - name: soroban_explorer_cache
     interval: 30s
@@ -120,14 +336,14 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Cache has fallen back to in-memory on {{ $labels.instance }}"
+          summary: 'Cache has fallen back to in-memory on {{ $labels.instance }}'
           description: >
             The cache_backend_status metric is 0, meaning the application is
             operating in in-memory fallback mode. Redis is either unavailable or
             could not be reached. Rate limiting and caching are degraded: cache
             entries are not shared across API replicas and will not survive restarts.
             Check REDIS_URL / CACHE_URL, Redis service health, and network connectivity.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/redis-fallback.md"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/redis-fallback.md'
 
       # ── Redis Sustained Fallback (escalation) ───────────────────────────────
       # Escalates to critical if Redis has been unavailable for more than 15 min.
@@ -138,12 +354,12 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "Redis has been unavailable for >15 min on {{ $labels.instance }}"
+          summary: 'Redis has been unavailable for >15 min on {{ $labels.instance }}'
           description: >
             Redis has been unreachable for over 15 minutes. The in-memory fallback
             does not persist data across restarts or share state between replicas.
             Rate limiting is operating per-instance. Immediate action required.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/redis-fallback.md"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/redis-fallback.md'
 
   # ── GraphQL subscriptions (DX03) ───────────────────────────────────────────
   # SLOs and error budgets: docs/graphql-subscriptions/design.md §SLOs.
@@ -176,12 +392,12 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "GraphQL subscription capacity rejections burning error budget fast"
+          summary: 'GraphQL subscription capacity rejections burning error budget fast'
           description: >
             {{ $value | humanizePercentage }} of subscription admissions were rejected for
             capacity over 1h (budget 0.5%, burn rate > 14.4x). Scale out or raise
             GQL_SUBSCRIPTION_MAX_GLOBAL; see the runbook.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#capacity-exhausted"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#capacity-exhausted'
 
   # Webhook batch delivery SLOs are defined in docs/webhook-batch-delivery-runbook.md.
   - name: soroban_explorer_webhook_batch_delivery
@@ -200,12 +416,12 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "Webhook batch delivery is burning its error budget quickly"
+          summary: 'Webhook batch delivery is burning its error budget quickly'
           description: >
             The one-hour webhook batch delivery error ratio is {{ $value | humanizePercentage }}.
             The SLO allows 0.1% failed attempts; this is a fast-burn condition.
             Check destination errors, SSRF blocks, and retry backlog.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/webhook-batch-delivery-runbook.md"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/webhook-batch-delivery-runbook.md'
 
       - alert: WebhookBatchP99LatencyExceeded
         expr: histogram_quantile(0.99, sum(rate(webhook_event_to_delivery_seconds_bucket{mode="batch"}[5m])) by (le)) > 0.1
@@ -214,11 +430,11 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Webhook batch p99 event-to-client latency exceeds 100 ms"
+          summary: 'Webhook batch p99 event-to-client latency exceeds 100 ms'
           description: >
             p99 is {{ $value }} seconds over five minutes. Check batch window,
             worker poll delay, outbox depth, indexer lag, and destination latency.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/webhook-batch-delivery-runbook.md#latency-slo"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/webhook-batch-delivery-runbook.md#latency-slo'
 
       - alert: WebhookOutboxBackpressure
         expr: webhook_outbox_events > 40000
@@ -227,13 +443,13 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "Webhook outbox is nearing its per-subscription admission ceiling"
+          summary: 'Webhook outbox is nearing its per-subscription admission ceiling'
           description: >
             The aggregate pending/in-flight outbox count is {{ $value }} and has
             crossed the 40,000 operating threshold. A single subscription is
             capped at 50,000; identify per-subscription backlog and slow
             destinations before admission backpressure begins.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/webhook-batch-delivery-runbook.md#backpressure"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/webhook-batch-delivery-runbook.md#backpressure'
 
       - alert: GraphQLSubscriptionAdmissionBudgetSlowBurn
         expr: graphql_subscriptions:admission_error_ratio:rate6h > (6 * 0.005)
@@ -242,11 +458,11 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "GraphQL subscription capacity rejections burning error budget"
+          summary: 'GraphQL subscription capacity rejections burning error budget'
           description: >
             {{ $value | humanizePercentage }} of subscription admissions were rejected for
             capacity over 6h (budget 0.5%, burn rate > 6x).
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#capacity-exhausted"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#capacity-exhausted'
 
       - alert: GraphQLSubscriptionBridgeErrors
         expr: |
@@ -258,10 +474,10 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "GraphQL subscription bridge failing to publish (SLO-2)"
+          summary: 'GraphQL subscription bridge failing to publish (SLO-2)'
           description: >
             More than 0.1% of feed messages failed inside the GraphQL bridge over 15m.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#bridge-errors"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#bridge-errors'
 
       - alert: GraphQLSubscriptionInvalidFeedPayloads
         expr: sum(rate(graphql_subscription_bridge_dropped_total{reason=~"invalid_payload|malformed_envelope"}[15m])) > 0.1
@@ -270,11 +486,11 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Feed bus is emitting payloads the GraphQL bridge rejects"
+          summary: 'Feed bus is emitting payloads the GraphQL bridge rejects'
           description: >
             {{ $value }} msg/s dropped as invalid — upstream data corruption or a feed
             schema change. Subscribers are protected; investigate the publisher.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#invalid-payloads"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#invalid-payloads'
 
       - alert: GraphQLSubscriptionBridgeLatencyHigh
         expr: histogram_quantile(0.99, sum by (le) (rate(graphql_subscription_bridge_duration_seconds_bucket[10m]))) > 0.005
@@ -283,9 +499,9 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "GraphQL subscription bridge p99 above 5ms (SLO-3)"
-          description: "Bridge p99 is {{ $value | humanizeDuration }}."
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#latency"
+          summary: 'GraphQL subscription bridge p99 above 5ms (SLO-3)'
+          description: 'Bridge p99 is {{ $value | humanizeDuration }}.'
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/graphql-subscriptions/runbook.md#latency'
 
   # ── Contract ABI submission registry (ECO01) ───────────────────────────────
   # Availability SLO: 99.5% over 30 days; 0.5% monthly error budget.
@@ -312,11 +528,11 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "Contract ABI submission error budget burning fast"
+          summary: 'Contract ABI submission error budget burning fast'
           description: >
             Workflow server errors are consuming the 0.5% monthly budget at a fast-burn
             rate. Disable contractAbiSubmissions and follow the recovery runbook.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/contract-abi-submissions/runbook.md#alerts-and-slos"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/contract-abi-submissions/runbook.md#alerts-and-slos'
 
       - alert: ContractAbiSubmissionBudgetSlowBurn
         expr: contract_abi_submissions:server_error_ratio:rate6h > (6 * 0.005)
@@ -325,10 +541,10 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Contract ABI submission error budget burning"
+          summary: 'Contract ABI submission error budget burning'
           description: >
             Workflow server errors exceed the 6x burn-rate threshold over 6 hours.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/contract-abi-submissions/runbook.md#alerts-and-slos"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/contract-abi-submissions/runbook.md#alerts-and-slos'
 
       - alert: ContractAbiSubmissionValidationLatencyHigh
         expr: histogram_quantile(0.99, sum by (le) (rate(contract_abi_submission_validation_duration_seconds_bucket[10m]))) > 0.25
@@ -337,11 +553,11 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Contract ABI indexed-evidence validation p99 exceeds 250ms"
+          summary: 'Contract ABI indexed-evidence validation p99 exceeds 250ms'
           description: >
             Validation latency exceeds its 250ms SLO. Check PostgreSQL health and
             the contract/function/ledger query plan before raising capacity.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/contract-abi-submissions/runbook.md#alerts-and-slos"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/contract-abi-submissions/runbook.md#alerts-and-slos'
 
   # ── Try-it API console (DX04) ──────────────────────────────────────────────
   # SLOs: docs/try-it/design.md §SLOs · Runbook: docs/try-it/runbook.md
@@ -364,11 +580,11 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Try-it console catalog failing to build (SLO-1 fast burn)"
+          summary: 'Try-it console catalog failing to build (SLO-1 fast burn)'
           description: >
             {{ $value | humanizePercentage }} of catalog requests returned 503 over 1h
             (budget 0.1%). The console shows a fallback link to the raw spec.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/try-it/runbook.md#catalog-unavailable"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/try-it/runbook.md#catalog-unavailable'
 
       - alert: TryItConsoleRequests5xx
         expr: |
@@ -380,11 +596,11 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Requests sent from the try-it console are failing (SLO-2)"
+          summary: 'Requests sent from the try-it console are failing (SLO-2)'
           description: >
             {{ $value | humanizePercentage }} of console-originated API requests returned 5xx.
             Usually mirrors an API incident; check HTTP5xxSurgeRatio first.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/try-it/runbook.md#console-requests-failing"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/try-it/runbook.md#console-requests-failing'
 
   # ── Gas fee alerts ──────────────────────────────────────────────────────────
   # Delivery-attempt objective: >= 99.5% successful attempts over 30 days.
@@ -411,12 +627,12 @@ groups:
           severity: critical
           team: platform
         annotations:
-          summary: "Gas fee alert delivery is burning its error budget quickly"
+          summary: 'Gas fee alert delivery is burning its error budget quickly'
           description: >
             Gas alert delivery failures exceed the 14.4x fast-burn threshold against
             the 0.5% monthly attempt-error budget. Disable gasFeeAlerts and inspect
             webhook delivery history, SSRF errors, and worker/database health.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/GAS_FEE_ALERTS.md#rollout-and-recovery"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/GAS_FEE_ALERTS.md#rollout-and-recovery'
 
       - alert: GasFeeAlertDeliveryBudgetSlowBurn
         expr: gas_fee_alerts:delivery_error_ratio:rate6h > (6 * 0.005)
@@ -425,9 +641,9 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Gas fee alert delivery is consuming its error budget"
-          description: "Delivery failures exceed the 6x slow-burn threshold over six hours."
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/GAS_FEE_ALERTS.md#rollout-and-recovery"
+          summary: 'Gas fee alert delivery is consuming its error budget'
+          description: 'Delivery failures exceed the 6x slow-burn threshold over six hours.'
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/GAS_FEE_ALERTS.md#rollout-and-recovery'
 
       - alert: GasFeeAlertEventToClientP99High
         expr: histogram_quantile(0.99, sum by (le) (rate(gas_fee_alert_event_to_delivery_seconds_bucket[10m]))) > 0.1
@@ -436,8 +652,8 @@ groups:
           severity: warning
           team: platform
         annotations:
-          summary: "Gas fee alert event-to-client p99 exceeds 100ms"
+          summary: 'Gas fee alert event-to-client p99 exceeds 100ms'
           description: >
             The measured p99 is {{ $value | humanizeDuration }}. This alert objective
             requires sustained-load verification before it can be considered an SLO.
-          runbook_url: "https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/GAS_FEE_ALERTS.md#telemetry-and-error-behavior"
+          runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/Soroban-Smart-Block-Backend-/blob/main/docs/GAS_FEE_ALERTS.md#telemetry-and-error-behavior'

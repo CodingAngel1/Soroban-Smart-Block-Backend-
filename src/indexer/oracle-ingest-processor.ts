@@ -1,4 +1,5 @@
 import { prismaRead as prisma } from '../db';
+import { config } from '../config';
 
 export interface OraclePriceUpdate {
   oracleAddress: string;
@@ -65,7 +66,7 @@ export async function extractOraclePriceUpdate(
   transactionHash: string,
 ): Promise<OraclePriceUpdate | null> {
   const transaction = await prisma.transaction.findUnique({
-    where: { hash: transactionHash },
+    where: { network_hash: { network: config.stellarNetwork, hash: transactionHash } },
     include: { events: true, ledger: true },
   });
 
