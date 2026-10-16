@@ -1,6 +1,7 @@
 import { prismaRead as prisma } from '../db';
 
 export const TX_SELECT = {
+  id: true,
   hash: true,
   ledgerSequence: true,
   ledgerCloseTime: true,

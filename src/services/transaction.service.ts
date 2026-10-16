@@ -9,7 +9,7 @@ import {
 import { getBn254ExemptionByTx } from '../indexer/bn254-tracker';
 
 export interface TransactionListFilter {
-  cursor?: number;
+  cursor?: { ledgerSequence: number; id: string };
   page?: number;
   limit?: number;
   contract?: string;
@@ -21,7 +21,7 @@ export interface TransactionListFilter {
 
 export interface CursorPaginatedTransactions {
   data: any[];
-  nextCursor: number | null;
+  nextCursor: { ledgerSequence: number; id: string } | null;
   hasNext: boolean;
 }
 
@@ -58,17 +58,33 @@ export class TransactionService {
     const where = this.buildFilterWhere(query);
 
     if (query.cursor !== undefined) {
-      // Cursor-based pagination (descending ledgerSequence)
-      where.ledgerSequence = { ...where.ledgerSequence, lt: query.cursor };
+      const cursorWhere = {
+        AND: [
+          where,
+          {
+            OR: [
+              { ledgerSequence: { lt: query.cursor.ledgerSequence } },
+              {
+                ledgerSequence: query.cursor.ledgerSequence,
+                id: { lt: query.cursor.id },
+              },
+            ],
+          },
+        ],
+      };
 
       const rows = await this.repo.findMany({
-        where,
+        where: cursorWhere,
         take: limit + 1,
       });
 
       const hasNext = rows.length > limit;
       const data = hasNext ? rows.slice(0, limit) : rows;
-      const nextCursor = hasNext ? (data[data.length - 1] as any).ledgerSequence : null;
+      const last = data[data.length - 1];
+      const nextCursor =
+        hasNext && typeof last?.id === 'string'
+          ? { ledgerSequence: last.ledgerSequence, id: last.id }
+          : null;
 
       return { data, nextCursor, hasNext };
     }

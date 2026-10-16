@@ -30,10 +30,12 @@
  *   POST /nft/collections/:address/register
  */
 
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { prismaRead, prismaWrite } from '../db';
 import { asyncHandler } from '../middleware/asyncHandler';
+import { AppError } from '../middleware/errorHandler';
+import { createCursorScope, decodeOpaqueCursor, encodeOpaqueCursor } from '../utils/opaque-cursor';
 import { uuidv7 } from '../utils/uuidv7';
 import { getItemRarityDetail, getCollectionRarityOverview } from '../services/nft-rarity-engine';
 import { getWashTradingAnalysis, getWashTradingLeaderboard } from '../services/nft-wash-trading';
@@ -46,6 +48,46 @@ import {
 } from '../services/nft-portfolio-service';
 
 export const nftRouter = Router();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+nftRouter.use((req: Request, res: Response, next: NextFunction) => {
+  const { cursor: rawCursor, page: _page, ...filters } = req.query;
+  const scope = createCursorScope(`nft${req.path}`, filters);
+  const sendJson = res.json.bind(res) as (body: unknown) => Response;
+  res.json = ((body?: unknown): Response => {
+    if (isRecord(body) && isRecord(body.pagination) && typeof body.pagination.cursor === 'string') {
+      body = {
+        ...body,
+        pagination: {
+          ...body.pagination,
+          cursor: encodeOpaqueCursor(body.pagination.cursor, scope),
+        },
+      };
+    }
+    return sendJson(body);
+  }) as Response['json'];
+
+  if (rawCursor !== undefined) {
+    if (typeof rawCursor !== 'string') {
+      next(new AppError(400, 'Invalid or mismatched cursor', 'INVALID_CURSOR'));
+      return;
+    }
+    const decoded = decodeOpaqueCursor(rawCursor, scope);
+    if (typeof decoded !== 'string') {
+      next(new AppError(400, 'Invalid or mismatched cursor', 'INVALID_CURSOR'));
+      return;
+    }
+    Object.defineProperty(req, 'query', {
+      configurable: true,
+      value: { ...req.query, cursor: decoded },
+    });
+  }
+
+  next();
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

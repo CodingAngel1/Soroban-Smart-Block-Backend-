@@ -11,7 +11,8 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
   | 'EXTERNAL_SERVICE_ERROR'
-  | 'INTERNAL_ERROR';
+  | 'INTERNAL_ERROR'
+  | 'INVALID_CURSOR';
 
 export interface ErrorClassification {
   statusCode: number;

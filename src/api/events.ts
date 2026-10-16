@@ -1,9 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
+import { AppError } from '../middleware/errorHandler';
 import { validateQuery, validateParams } from '../middleware/validation';
 import { paginationSchema, stellarAddress, safeLabel } from '../schemas/common';
 import { eventService } from '../services/event.service';
+import { createCursorScope, decodeOpaqueCursor, encodeOpaqueCursor } from '../utils/opaque-cursor';
 
 /**
  * @swagger
@@ -20,8 +22,7 @@ const eventListQuerySchema = paginationSchema.merge(
     contract: stellarAddress.optional(),
     type: safeLabel.optional(),
     topic: safeLabel.optional(),
-    // #914 — cursor-based pagination (preferred for deep pages); page/limit
-    // remains supported as a compatibility shim.
+    // Opaque, query-bound cursor; page-based pagination remains supported.
     cursor: z.string().optional(),
   }),
 );
@@ -56,7 +57,7 @@ const eventListQuerySchema = paginationSchema.merge(
  *       - in: query
  *         name: cursor
  *         schema: { type: string }
- *         description: Event id to resume after (cursor pagination, preferred for deep pages). Takes precedence over `page` when set.
+ *         description: Opaque cursor returned by the previous response. It is bound to this endpoint, network, filters, and page size.
  *     responses:
  *       200:
  *         description: Paginated list of events (summary fields only)
@@ -82,7 +83,7 @@ const eventListQuerySchema = paginationSchema.merge(
  *                 total: { type: integer, description: 'Total number of events matching the filter' }
  *                 page: { type: integer }
  *                 limit: { type: integer }
- *                 nextCursor: { type: string, nullable: true, description: 'Pass as `cursor` to fetch the next page' }
+ *                 nextCursor: { type: string, nullable: true, description: 'Opaque cursor to pass as `cursor` to fetch the next page' }
  *               example:
  *                 data:
  *                   - id: '3389e9f0f1a4e32477b1c0d9e8a6f5b4c3d2e1f0a9b8c7d6e5f40312233445566-AAAADwAAAAh0cmFuc2Zlcg=='
@@ -120,8 +121,26 @@ eventRouter.get(
   validateQuery(eventListQuerySchema),
   asyncHandler(async (req: Request, res: Response) => {
     const query = (req as any).validatedQuery as z.infer<typeof eventListQuerySchema>;
-    const result = await eventService.listEvents(query);
-    res.json(result);
+    const scope = createCursorScope('events', {
+      limit: query.limit,
+      contract: query.contract,
+      type: query.type,
+      topic: query.topic,
+    });
+    let cursor: string | undefined;
+    if (query.cursor !== undefined) {
+      const decoded = decodeOpaqueCursor(query.cursor, scope);
+      if (typeof decoded !== 'string') {
+        throw new AppError(400, 'Invalid or mismatched cursor', 'INVALID_CURSOR');
+      }
+      cursor = decoded;
+    }
+
+    const result = await eventService.listEvents({ ...query, cursor });
+    res.json({
+      ...result,
+      nextCursor: result.nextCursor ? encodeOpaqueCursor(result.nextCursor, scope) : null,
+    });
   }),
 );
 
