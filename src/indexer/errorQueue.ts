@@ -2,7 +2,13 @@ import { prismaWrite as prisma } from '../db';
 import { Prisma } from '@prisma/client';
 import { logger } from '../logger';
 import { classifyFailureReason } from './failure-parser';
-import { indexerErrorQueueDepth, indexerErrorRetriesTotal, indexerErrorDlqTotal } from '../metrics';
+import { config } from '../config';
+import {
+  indexerErrorQueueDepth,
+  indexerErrorRetriesTotal,
+  indexerErrorDlqTotal,
+  indexerErrorDlqOldestAgeSeconds,
+} from '../metrics';
 
 export { classifyFailureReason };
 
@@ -141,6 +147,7 @@ export async function moveToDeadLetter(dlData: {
   // #912 — dead-letter events are permanent failures; count them by reason so
   // operators can see poison-vs-exhaustion mix and alert on DLQ rate.
   indexerErrorDlqTotal.inc({
+    network: config.stellarNetwork,
     reason: dlData.reason ?? classifyFailureReason(dlData.errorMsg),
   });
   await prisma.deadLetterItem.create({
@@ -209,29 +216,51 @@ export async function purgeDeadLetterItems(ids?: string[]): Promise<number> {
  * retryFailures() cycle so /metrics reflects queue reality between scans.
  */
 export async function updateErrorQueueMetrics(): Promise<void> {
-  const [pendingCount, deadCount] = await Promise.all([
+  const [pendingCount, deadCount, oldestDeadLetter] = await Promise.all([
     prisma.failedItem.count({ where: { dead: false } }),
     prisma.deadLetterItem.count(),
+    prisma.deadLetterItem.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    }),
   ]);
 
   indexerErrorQueueDepth.set({ queue: 'pending' }, pendingCount);
   indexerErrorQueueDepth.set({ queue: 'dead' }, deadCount);
+  indexerErrorDlqOldestAgeSeconds.set(
+    { network: config.stellarNetwork },
+    oldestDeadLetter
+      ? Math.max(0, (Date.now() - oldestDeadLetter.createdAt.getTime()) / 1000)
+      : 0,
+  );
 }
 
 /** Get queue depth and backpressure status metrics */
 export async function getQueueBackpressureStatus() {
-  const [pendingCount, deadCount] = await Promise.all([
+  const [pendingCount, deadCount, oldestDeadLetter] = await Promise.all([
     prisma.failedItem.count({ where: { dead: false } }),
     prisma.deadLetterItem.count(),
+    prisma.deadLetterItem.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    }),
   ]);
 
   // #912 — keep the depth gauges in sync with every backpressure read.
   indexerErrorQueueDepth.set({ queue: 'pending' }, pendingCount);
   indexerErrorQueueDepth.set({ queue: 'dead' }, deadCount);
+  const oldestDeadLetterAgeSeconds = oldestDeadLetter
+    ? Math.max(0, (Date.now() - oldestDeadLetter.createdAt.getTime()) / 1000)
+    : 0;
+  indexerErrorDlqOldestAgeSeconds.set(
+    { network: config.stellarNetwork },
+    oldestDeadLetterAgeSeconds,
+  );
 
   return {
     pendingCount,
     deadCount,
+    oldestDeadLetterAgeSeconds,
     isOverloaded: pendingCount > 500,
   };
 }

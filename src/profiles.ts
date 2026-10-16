@@ -137,6 +137,11 @@ export function validateProfile(profile: NetworkProfile): void {
       `[${name}] networkPassphrase is required. Set ${name.toUpperCase()}_PASSPHRASE.`,
     );
   }
+  if (networkPassphrase !== NETWORK_PASSPHRASES[name]) {
+    throw new Error(
+      `[${name}] networkPassphrase does not match the canonical ${name} network passphrase.`,
+    );
+  }
 
   // ── URL protocol validation ───────────────────────────────────────────────
   if (!isDbUrl(databaseUrl)) {

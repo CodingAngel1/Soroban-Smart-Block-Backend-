@@ -231,6 +231,52 @@ groups:
             production and RPC availability before escalating.
           runbook_url: 'https://github.com/Soroban-Smart-Block-Explorer/runbooks/blob/main/indexer-lag.md'
 
+  - name: soroban_explorer_indexer_dlq
+    interval: 30s
+    rules:
+      - alert: DeadLetterQueueOldestItemWarning
+        expr: indexer_error_dlq_oldest_age_seconds > 3600
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Oldest dead-letter item is over one hour old on {{ $labels.network }}"
+          description: >
+            The oldest item in the {{ $labels.network }} indexer dead-letter queue
+            has been waiting for {{ $value | humanizeDuration }}. Inspect the
+            network-scoped dead-letter queue and resolve the underlying failure.
+          runbook_url: "https://github.com/nnamanichikezie9/Soroban-Smart-Block-Backend-/blob/main/docs/dead-letter-queue-runbook.md"
+
+      - alert: DeadLetterQueueOldestItemCritical
+        expr: indexer_error_dlq_oldest_age_seconds > 86400
+        for: 10m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Dead-letter item has remained unresolved for over one day on {{ $labels.network }}"
+          description: >
+            The oldest item in the {{ $labels.network }} indexer dead-letter queue
+            has been waiting for {{ $value | humanizeDuration }}. The backlog is
+            stale and requires immediate operator triage.
+          runbook_url: "https://github.com/nnamanichikezie9/Soroban-Smart-Block-Backend-/blob/main/docs/dead-letter-queue-runbook.md"
+
+      - alert: DeadLetterQueueSustainedGrowth
+        expr: sum by (network) (increase(indexer_error_dlq_total[15m])) > 25
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Dead-letter queue is growing rapidly on {{ $labels.network }}"
+          description: >
+            More than 25 items were dead-lettered in each 15-minute evaluation
+            window for at least 10 minutes on {{ $labels.network }}. Group by
+            failure reason and check the indexer, RPC provider, and recent
+            decoder changes.
+          runbook_url: "https://github.com/nnamanichikezie9/Soroban-Smart-Block-Backend-/blob/main/docs/dead-letter-queue-runbook.md"
+
   - name: soroban_explorer_database
     interval: 30s
     rules:
