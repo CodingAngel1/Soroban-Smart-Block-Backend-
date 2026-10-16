@@ -1,4 +1,5 @@
 import { prismaRead as prisma } from '../db';
+import type { StableCursorPosition } from '../utils/stable-cursor';
 import { config } from '../config';
 
 // =============================================================================
@@ -43,9 +44,10 @@ export interface EventFindOptions {
   where: Record<string, any>;
   take?: number;
   skip?: number;
-  orderBy?: Record<string, 'asc' | 'desc'>;
+  orderBy?: Array<Record<string, 'asc' | 'desc'>>;
   /** #914 — keyset cursor (event id) for cursor-based pagination. */
   cursorId?: string;
+  after?: StableCursorPosition;
 }
 
 export class EventRepository {

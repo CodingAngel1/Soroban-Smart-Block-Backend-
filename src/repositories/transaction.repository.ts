@@ -21,6 +21,8 @@ export interface TransactionFindOptions {
   take?: number;
   skip?: number;
   orderBy?: Array<Record<string, 'asc' | 'desc'>>;
+  after?: StableCursorPosition;
+  includeCursorId?: boolean;
 }
 
 export class TransactionRepository {
@@ -30,7 +32,7 @@ export class TransactionRepository {
       orderBy: options.orderBy ?? [{ ledgerSequence: 'desc' }, { id: 'desc' }],
       take: options.take,
       skip: options.skip,
-      select: TX_SELECT,
+      select: options.includeCursorId ? { id: true, ...TX_SELECT } : TX_SELECT,
     });
   }
 

@@ -236,6 +236,8 @@ Full interactive API documentation is available at:
 - **Development**: http://localhost:3000/api/docs (Swagger UI)
 - **Production**: https://explorer.sorobansmart.com/api/docs
 - **Raw spec**: http://localhost:3000/api/docs.json (OpenAPI 3.0)
+- **Compatibility matrix**: [API versioning and endpoint-family compatibility](docs/api-versioning.md)
+- **Cursor contract**: [Stable cursor pagination](docs/cursor-pagination.md)
 
 ### Core Endpoints
 
@@ -343,6 +345,8 @@ For more examples and full endpoint reference, see `/api/docs` or [API_REFERENCE
 | `INDEXER_START_LEDGER`     | `0`     | Starting ledger sequence  |
 | `INDEXER_POLL_INTERVAL_MS` | `5000`  | Poll interval (5 seconds) |
 | `INDEXER_BATCH_SIZE`       | `100`   | Ledgers per batch         |
+| `INDEXER_CATCHUP_WORKERS`  | `4`     | Default parallel historical catch-up workers (1-32) |
+| `INDEXER_CATCHUP_WORKERS_TESTNET` / `_MAINNET` / `_DEVNET` | unset | Optional network-specific worker cap; overrides the default for that network |
 | `INDEXER_MAX_RETRIES`      | `3`     | RPC call retry attempts   |
 | `INDEXER_RETRY_DELAY_MS`   | `1000`  | Retry backoff (ms)        |
 

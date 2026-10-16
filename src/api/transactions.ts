@@ -12,19 +12,30 @@ import { transactionService } from '../services/transaction.service';
 
 export const transactionRouter = Router();
 
-const listSchema = z.object({
-  // cursor-based (preferred for large datasets) — cursor = ledger number
-  cursor: z.coerce.number().int().min(0).optional(),
-  // offset-based fallback
-  page: z.coerce.number().min(1).default(1),
-  limit: z.coerce.number().min(1).max(100).default(20),
-  // filters
-  contract: z.string().optional(),
-  account: z.string().optional(),
-  status: z.string().optional(),
-  ledgerMin: z.coerce.number().int().min(0).optional(),
-  ledgerMax: z.coerce.number().int().min(0).optional(),
-});
+const listSchema = z
+  .object({
+    // Legacy cursor is a ledger number; `pagination=cursor` opts into the stable opaque cursor.
+    cursor: z.union([z.coerce.number().int().min(0), z.string().min(1).max(2048)]).optional(),
+    pagination: z.literal('cursor').optional(),
+    // offset-based fallback
+    page: z.coerce.number().min(1).default(1),
+    limit: z.coerce.number().min(1).max(100).default(20),
+    // filters
+    contract: z.string().optional(),
+    account: z.string().optional(),
+    status: z.string().optional(),
+    ledgerMin: z.coerce.number().int().min(0).optional(),
+    ledgerMax: z.coerce.number().int().min(0).optional(),
+  })
+  .superRefine((query, context) => {
+    if (query.pagination === 'cursor' && query.page !== 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['page'],
+        message: 'page cannot be used with cursor pagination',
+      });
+    }
+  });
 
 /**
  * @swagger
@@ -35,15 +46,19 @@ const listSchema = z.object({
  *     parameters:
  *       - in: query
  *         name: cursor
- *         schema: { type: integer, minimum: 0 }
- *         description: >-
- *           Ledger sequence cursor (preferred for large datasets). When set,
- *           returns rows with ledgerSequence < cursor in descending order and the
- *           response uses the cursor envelope.
+ *         schema:
+ *           oneOf:
+ *             - { type: integer, minimum: 0 }
+ *             - { type: string, maxLength: 2048 }
+ *         description: Legacy ledger-sequence cursor, or the opaque nextCursor value when `pagination=cursor`.
+ *       - in: query
+ *         name: pagination
+ *         schema: { type: string, enum: [cursor] }
+ *         description: Select the stable opaque cursor contract. On the first page, omit `cursor`; pass the returned `nextCursor` on subsequent requests.
  *       - in: query
  *         name: page
  *         schema: { type: integer, minimum: 1, default: 1 }
- *         description: 1-based page number (offset pagination; ignored when cursor is set)
+ *         description: 1-based page number for legacy offset pagination; do not combine with pagination=cursor
  *       - in: query
  *         name: limit
  *         schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
@@ -70,14 +85,21 @@ const listSchema = z.object({
  *         description: Inclusive upper bound on ledger sequence
  *     responses:
  *       200:
- *         description: >-
- *           Paginated transactions. Returns the cursor envelope when `cursor` is
- *           supplied, otherwise the offset envelope.
+ *         description: Stable cursor requests return { data, nextCursor, hasNext }; legacy cursor and offset requests retain their existing response shapes.
  *         content:
  *           application/json:
  *             schema:
  *               oneOf:
- *                 - title: CursorPage
+ *                 - title: StableCursorPage
+ *                   type: object
+ *                   required: [data, nextCursor, hasNext]
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items: { $ref: '#/components/schemas/Transaction' }
+ *                     nextCursor: { type: string, nullable: true, description: Opaque cursor; pass with pagination=cursor }
+ *                     hasNext: { type: boolean }
+ *                 - title: LegacyCursorPage
  *                   type: object
  *                   properties:
  *                     data:
@@ -86,9 +108,8 @@ const listSchema = z.object({
  *                     nextCursor:
  *                       type: integer
  *                       nullable: true
- *                       description: ledgerSequence to pass as the next `cursor`, or null when there are no more rows
- *                       example: 3168074
- *                     hasNext: { type: boolean, example: true }
+ *                       description: Legacy ledgerSequence cursor
+ *                     hasNext: { type: boolean }
  *                 - title: OffsetPage
  *                   type: object
  *                   properties:
@@ -100,7 +121,7 @@ const listSchema = z.object({
  *                     limit: { type: integer, example: 20 }
  *                     pages: { type: integer, description: 'Total number of pages (ceil(total / limit))', example: 78 }
  *       400:
- *         description: Invalid query parameters
+ *         description: Invalid query parameters or cursor
  *         content:
  *           application/json:
  *             schema:
@@ -110,7 +131,8 @@ const listSchema = z.object({
  *                 error: limit must be less than or equal to 100
  */
 // GET /transactions
-// Cursor mode:  ?cursor=<ledger>&limit=20&contract=...
+// Stable cursor mode: ?pagination=cursor&limit=20&contract=...
+// Legacy cursor mode: ?cursor=<ledger>&limit=20&contract=...
 // Offset mode:  ?page=2&limit=20&contract=...
 transactionRouter.get(
   '/',
