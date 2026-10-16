@@ -689,6 +689,7 @@ Every pull request is gated by the CI pipeline (`.github/workflows/ci.yml`), whi
 ## Documentation
 
 - **[API_REFERENCE.md](./docs/API_REFERENCE.md)** — Comprehensive API endpoint documentation
+- **[API error troubleshooting](./docs/api-error-troubleshooting.md)** — Request IDs, error envelopes, and support diagnostics
 - **[JSDOC_IMPLEMENTATION_GUIDE.md](./JSDOC_IMPLEMENTATION_GUIDE.md)** — JSDoc standards for route handlers
 - **[SWAGGER_DOCUMENTATION_STRATEGY.md](./SWAGGER_DOCUMENTATION_STRATEGY.md)** — Swagger/OpenAPI documentation
 - **[DATA_MESH_PLATFORM.md](./DATA_MESH_PLATFORM.md)** — Analytics data lake architecture
