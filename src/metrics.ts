@@ -22,6 +22,21 @@ export const httpRequestTotal = new Counter({
   registers: [registry],
 });
 
+export const apiSloRequestsTotal = new Counter({
+  name: 'api_slo_requests_total',
+  help: 'API requests by bounded endpoint class and SLO outcome',
+  labelNames: ['endpoint_class', 'outcome'],
+  registers: [registry],
+});
+
+export const apiSloRequestDuration = new Histogram({
+  name: 'api_slo_request_duration_seconds',
+  help: 'API request duration by bounded endpoint class and SLO outcome',
+  labelNames: ['endpoint_class', 'outcome'],
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2.5, 5, 10],
+  registers: [registry],
+});
+
 // ── HTTP Errors (global error handler) ───────────────────────────────────────
 export const httpErrorsTotal = new Counter({
   name: 'http_errors_total',
@@ -29,6 +44,8 @@ export const httpErrorsTotal = new Counter({
   labelNames: ['code', 'severity', 'route'],
   registers: [registry],
 });
+
+const gasFeeAlertMeter = otelMetrics.getMeter('soroban-gas-fee-alerts');
 
 export const contractAbiSubmissionOperations = new Counter({
   name: 'contract_abi_submission_operations_total',
@@ -169,12 +186,21 @@ export const http5xxSurge = new Gauge({
 export const indexerLastLedger = new Gauge({
   name: 'indexer_last_ledger',
   help: 'Last ledger sequence number processed by the indexer',
+  labelNames: ['network'],
   registers: [registry],
 });
 
 export const indexerIngestionLag = new Gauge({
   name: 'indexer_ingestion_lag_ledgers',
   help: 'Number of ledgers behind the chain tip',
+  labelNames: ['network'],
+  registers: [registry],
+});
+
+export const indexerLedgerCloseTimestamp = new Gauge({
+  name: 'indexer_ledger_close_timestamp_seconds',
+  help: 'Unix timestamp of the latest successfully indexed ledger close time',
+  labelNames: ['network'],
   registers: [registry],
 });
 
@@ -242,53 +268,17 @@ export const cacheBackendStatus = new Gauge({
   registers: [registry],
 });
 
+export const redisCacheOperationsTotal = new Counter({
+  name: 'redis_cache_operations_total',
+  help: 'Redis-backed cache operations by bounded cache family, operation, and outcome',
+  labelNames: ['family', 'operation', 'outcome'],
+  registers: [registry],
+});
+
 // ── Replica lag ──────────────────────────────────────────────────────────────
 export const replicaLagCheckErrors = new Counter({
   name: 'replica_lag_check_errors_total',
   help: 'Total number of replica lag-check failures (forces primary selection)',
-  registers: [registry],
-});
-
-// ── Outbound RPC / Horizon calls (#910) ──────────────────────────────────────
-// The indexer's primary external dependency is the Stellar RPC node (and
-// Horizon as a REST fallback). These metrics track outbound call latency,
-// error rates, and retry activity so RPC degradation is distinguishable
-// from DB write speed, and retry storms (each retry = another RPC call,
-// burning quota) are countable.
-export const rpcCallDuration = new Histogram({
-  name: 'rpc_call_duration_seconds',
-  help: 'Duration of outbound Stellar RPC calls in seconds',
-  labelNames: ['operation', 'status'],
-  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
-  registers: [registry],
-});
-
-export const rpcCallErrorsTotal = new Counter({
-  name: 'rpc_call_errors_total',
-  help: 'Total number of outbound Stellar RPC call errors',
-  labelNames: ['operation', 'type'],
-  registers: [registry],
-});
-
-export const rpcCallRetriesTotal = new Counter({
-  name: 'rpc_call_retries_total',
-  help: 'Total number of RPC call retries performed (rate-limit backoff)',
-  labelNames: ['operation'],
-  registers: [registry],
-});
-
-export const horizonCallDuration = new Histogram({
-  name: 'horizon_call_duration_seconds',
-  help: 'Duration of outbound Horizon REST API calls in seconds',
-  labelNames: ['operation', 'status'],
-  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
-  registers: [registry],
-});
-
-export const horizonCallErrorsTotal = new Counter({
-  name: 'horizon_call_errors_total',
-  help: 'Total number of outbound Horizon REST API call errors',
-  labelNames: ['operation', 'type'],
   registers: [registry],
 });
 
