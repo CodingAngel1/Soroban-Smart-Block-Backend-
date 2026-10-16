@@ -15,5 +15,6 @@ unchanged body. This is additive to the response contract. Clients that do not
 send `If-None-Match` continue receiving the existing JSON response. Cache keys
 must honor `Vary: X-Network` because a request can select a Stellar network via
 that header; requests routed by network-specific hostnames naturally have
-separate host cache keys. Deployments should ensure any shared proxy respects
-both the validator and the `Vary` header.
+separate host cache keys. `X-Network` is a cache-key selector, not a switch for the Prisma client's
+deployment-bound database. Deployments should use the matching network profile
+and ensure any shared proxy respects both the validator and the `Vary` header.

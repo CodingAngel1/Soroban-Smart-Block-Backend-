@@ -19,7 +19,8 @@ returned.
 
 This is additive for existing clients that ignore unknown response fields.
 Clients that validate response objects strictly should allow `errors`. The
-response item order remains identical to the request. The endpoint uses the
-network selected by the request's existing `X-Network`/host routing; clients
-must keep that network selection consistent when comparing results. No
-migration or feature flag is required.
+response item order remains identical to the request. The endpoints' Prisma
+client is bound to the active deployment profile. `X-Network` does not switch
+the batch endpoints to another network's database; deploy each network against
+its corresponding profile and do not treat that header as a database selector
+for these endpoints. No migration or feature flag is required.
