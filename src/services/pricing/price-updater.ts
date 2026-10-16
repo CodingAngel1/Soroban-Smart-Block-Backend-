@@ -10,6 +10,20 @@ let activeInterval: ReturnType<typeof setInterval> | null = null;
 let slowInterval: ReturnType<typeof setInterval> | null = null;
 let stableInterval: ReturnType<typeof setInterval> | null = null;
 let externalInterval: ReturnType<typeof setInterval> | null = null;
+let externalStartTimeout: ReturnType<typeof setTimeout> | null = null;
+let stopping = false;
+const activeUpdates = new Set<Promise<void>>();
+
+function runTracked(update: () => Promise<void>): Promise<void> {
+  if (stopping) return Promise.resolve();
+  const task = update();
+  activeUpdates.add(task);
+  void task.then(
+    () => activeUpdates.delete(task),
+    () => activeUpdates.delete(task),
+  );
+  return task;
+}
 
 const ACTIVE_PAIR_INTERVAL_MS = 30_000;
 const INACTIVE_PAIR_INTERVAL_MS = 5 * 60_000;
@@ -141,19 +155,31 @@ export async function runExternalApiUpdate(): Promise<void> {
 
 export async function startPriceUpdater(): Promise<void> {
   logger.info('[PriceUpdater] Starting background price updates...');
+  stopping = false;
 
   if (activeInterval) clearInterval(activeInterval);
   if (slowInterval) clearInterval(slowInterval);
   if (stableInterval) clearInterval(stableInterval);
 
-  await runActivePriceUpdate();
-  await runStablecoinUpdate();
+  await Promise.all([runTracked(runActivePriceUpdate), runTracked(runStablecoinUpdate)]);
 
-  activeInterval = setInterval(runActivePriceUpdate, ACTIVE_PAIR_INTERVAL_MS);
-  slowInterval = setInterval(runSlowPriceUpdate, INACTIVE_PAIR_INTERVAL_MS);
-  stableInterval = setInterval(runStablecoinUpdate, STABLE_MONITOR_INTERVAL_MS);
-  externalInterval = setInterval(runExternalApiUpdate, EXTERNAL_API_INTERVAL_MS);
-  setTimeout(() => runExternalApiUpdate(), 10_000);
+  activeInterval = setInterval(
+    () => void runTracked(runActivePriceUpdate),
+    ACTIVE_PAIR_INTERVAL_MS,
+  );
+  slowInterval = setInterval(() => void runTracked(runSlowPriceUpdate), INACTIVE_PAIR_INTERVAL_MS);
+  stableInterval = setInterval(
+    () => void runTracked(runStablecoinUpdate),
+    STABLE_MONITOR_INTERVAL_MS,
+  );
+  externalInterval = setInterval(
+    () => void runTracked(runExternalApiUpdate),
+    EXTERNAL_API_INTERVAL_MS,
+  );
+  externalStartTimeout = setTimeout(() => {
+    externalStartTimeout = null;
+    void runTracked(runExternalApiUpdate);
+  }, 10_000);
 
   logger.info('[PriceUpdater] Background price updates started');
 }
@@ -200,7 +226,8 @@ export async function runStablecoinUpdate(): Promise<void> {
   }
 }
 
-export function stopPriceUpdater(): void {
+export async function stopPriceUpdater(): Promise<void> {
+  stopping = true;
   if (activeInterval) {
     clearInterval(activeInterval);
     activeInterval = null;
@@ -217,5 +244,10 @@ export function stopPriceUpdater(): void {
     clearInterval(externalInterval);
     externalInterval = null;
   }
+  if (externalStartTimeout) {
+    clearTimeout(externalStartTimeout);
+    externalStartTimeout = null;
+  }
+  await Promise.allSettled(Array.from(activeUpdates));
   logger.info('[PriceUpdater] Background price updates stopped');
 }
