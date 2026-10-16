@@ -1,6 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
+import { sendValidatedResponse } from '../middleware/responseValidation';
+import {
+  transactionDetailResponseSchema,
+  transactionListResponseSchema,
+} from '../schemas/transaction-event-responses';
 import { transactionService } from '../services/transaction.service';
 
 /**
@@ -117,7 +122,7 @@ transactionRouter.get(
   asyncHandler(async (req: Request, res: Response) => {
     const q = listSchema.parse(req.query);
     const result = await transactionService.listTransactions(q);
-    res.json(result);
+    sendValidatedResponse(res, transactionListResponseSchema, result, 'GET /transactions');
   }),
 );
 
@@ -184,6 +189,6 @@ transactionRouter.get(
     const tx = await transactionService.getTransactionByHash(req.params.hash);
     if (!tx) return res.status(404).json({ error: 'Transaction not found' });
 
-    res.json(tx);
+    sendValidatedResponse(res, transactionDetailResponseSchema, tx, 'GET /transactions/:hash');
   }),
 );

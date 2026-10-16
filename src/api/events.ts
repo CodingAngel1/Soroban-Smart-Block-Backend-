@@ -2,7 +2,12 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { validateQuery, validateParams } from '../middleware/validation';
+import { sendValidatedResponse } from '../middleware/responseValidation';
 import { paginationSchema, stellarAddress, safeLabel } from '../schemas/common';
+import {
+  eventListResponseSchema,
+  eventResponseSchema,
+} from '../schemas/transaction-event-responses';
 import { eventService } from '../services/event.service';
 
 /**
@@ -121,7 +126,7 @@ eventRouter.get(
   asyncHandler(async (req: Request, res: Response) => {
     const query = (req as any).validatedQuery as z.infer<typeof eventListQuerySchema>;
     const result = await eventService.listEvents(query);
-    res.json(result);
+    sendValidatedResponse(res, eventListResponseSchema, result, 'GET /events');
   }),
 );
 
@@ -162,6 +167,6 @@ eventRouter.get(
     const params = (req as any).validatedParams as { id: string };
     const event = await eventService.getEventById(params.id);
     if (!event) return res.status(404).json({ error: 'Event not found' });
-    res.json(event);
+    sendValidatedResponse(res, eventResponseSchema, event, 'GET /events/:id');
   }),
 );

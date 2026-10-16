@@ -79,6 +79,7 @@ const TX_FIXTURE = {
   sourceAccount: 'GABC1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDE',
   contractAddress: 'CABC1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDE',
   functionName: 'transfer',
+  functionArgs: null,
   status: 'success',
   humanReadable: 'Transferred 100 USDC',
   feeCharged: '100',
@@ -106,6 +107,10 @@ const EVENT_FIXTURE = {
   decoded: { from: 'GA', to: 'GB', amount: '100' },
   ledgerSequence: 1000,
   ledgerCloseTime: new Date('2024-01-01T00:00:00Z'),
+  topics: [],
+  data: { raw: 'AA==' },
+  compacted: false,
+  createdAt: new Date('2024-01-01T00:00:00Z'),
 };
 
 const EVENT_FIXTURE_2 = {
@@ -277,6 +282,7 @@ describe('GET /api/v1/transactions/:hash', () => {
     expect(res.status).toBe(200);
     expect(body.events).toHaveLength(0);
   });
+
 });
 
 // ── GET /api/v1/events ────────────────────────────────────────────────────────
@@ -391,4 +397,5 @@ describe('GET /api/v1/events', () => {
     expect(event).toHaveProperty('ledgerSequence');
     expect(event).toHaveProperty('ledgerCloseTime');
   });
+
 });
