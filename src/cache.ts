@@ -210,7 +210,7 @@ function lruGet(key: string): MemoryEntry | undefined {
 
 async function getRedisClient(): Promise<RedisClientType | null> {
   if (CACHE_URL === '' || CACHE_URL.startsWith('memory://')) return null;
-  if (redisClient) return redisClient;
+  if (redisClient) return redisAvailable ? redisClient : null;
 
   try {
     const { createClient } = await import('redis');
@@ -249,6 +249,10 @@ async function getRedisClient(): Promise<RedisClientType | null> {
         redisAvailable = false;
         cacheBackendStatus.set(0);
       });
+      client.on('ready', () => {
+        redisAvailable = true;
+        cacheBackendStatus.set(1);
+      });
 
       client.on('reconnecting', () => {
         logger.info('[cache] Redis Sentinel reconnecting', { backend: 'sentinel' });
@@ -270,6 +274,10 @@ async function getRedisClient(): Promise<RedisClientType | null> {
         logger.error('[cache] Redis client error', { backend: 'redis', error: String(err) });
         redisAvailable = false;
         cacheBackendStatus.set(0);
+      });
+      client.on('ready', () => {
+        redisAvailable = true;
+        cacheBackendStatus.set(1);
       });
       await client.connect();
       redisClient = client;
