@@ -1,4 +1,5 @@
 import { prismaRead as prisma } from '../db';
+import type { StableCursorPosition } from '../utils/stable-cursor';
 
 // =============================================================================
 // Issue #1119 — Bound Prisma findMany queries that omit a take limit
@@ -42,19 +43,37 @@ export interface EventFindOptions {
   where: Record<string, any>;
   take?: number;
   skip?: number;
-  orderBy?: Record<string, 'asc' | 'desc'>;
+  orderBy?: Array<Record<string, 'asc' | 'desc'>>;
   /** #914 — keyset cursor (event id) for cursor-based pagination. */
   cursorId?: string;
+  after?: StableCursorPosition;
 }
 
 export class EventRepository {
   async findManySummary(options: EventFindOptions) {
     return prisma.event.findMany({
-      where: options.where,
-      orderBy: options.orderBy ? options.orderBy : [{ ledgerSequence: 'desc' }, { id: 'desc' }],
-      ...(options.cursorId
-        ? { cursor: { id: options.cursorId }, skip: 1 }
-        : { skip: options.skip }),
+      where: options.after
+        ? {
+            AND: [
+              options.where,
+              {
+                OR: [
+                  { ledgerSequence: { lt: options.after.ledgerSequence } },
+                  {
+                    ledgerSequence: options.after.ledgerSequence,
+                    id: { lt: options.after.id },
+                  },
+                ],
+              },
+            ],
+          }
+        : options.where,
+      orderBy: options.orderBy ?? [{ ledgerSequence: 'desc' }, { id: 'desc' }],
+      ...(options.after
+        ? {}
+        : options.cursorId
+          ? { cursor: { id: options.cursorId }, skip: 1 }
+          : { skip: options.skip }),
       take: options.take,
       select: EVENT_SUMMARY_SELECT,
     });

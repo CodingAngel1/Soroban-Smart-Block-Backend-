@@ -236,6 +236,8 @@ Full interactive API documentation is available at:
 - **Development**: http://localhost:3000/api/docs (Swagger UI)
 - **Production**: https://explorer.sorobansmart.com/api/docs
 - **Raw spec**: http://localhost:3000/api/docs.json (OpenAPI 3.0)
+- **Compatibility matrix**: [API versioning and endpoint-family compatibility](docs/api-versioning.md)
+- **Cursor contract**: [Stable cursor pagination](docs/cursor-pagination.md)
 
 ### Core Endpoints
 

@@ -1,4 +1,5 @@
 import { prismaRead as prisma } from '../db';
+import type { StableCursorPosition } from '../utils/stable-cursor';
 
 export const TX_SELECT = {
   hash: true,
@@ -20,16 +21,33 @@ export interface TransactionFindOptions {
   take?: number;
   skip?: number;
   orderBy?: Array<Record<string, 'asc' | 'desc'>>;
+  after?: StableCursorPosition;
+  includeCursorId?: boolean;
 }
 
 export class TransactionRepository {
   async findMany(options: TransactionFindOptions) {
     return prisma.transaction.findMany({
-      where: options.where,
+      where: options.after
+        ? {
+            AND: [
+              options.where,
+              {
+                OR: [
+                  { ledgerSequence: { lt: options.after.ledgerSequence } },
+                  {
+                    ledgerSequence: options.after.ledgerSequence,
+                    id: { lt: options.after.id },
+                  },
+                ],
+              },
+            ],
+          }
+        : options.where,
       orderBy: options.orderBy ?? [{ ledgerSequence: 'desc' }, { id: 'desc' }],
       take: options.take,
       skip: options.skip,
-      select: TX_SELECT,
+      select: options.includeCursorId ? { id: true, ...TX_SELECT } : TX_SELECT,
     });
   }
 
