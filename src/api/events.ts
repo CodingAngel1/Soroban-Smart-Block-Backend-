@@ -5,6 +5,7 @@ import { conditionalCache } from '../middleware/conditionalCache';
 import { validateQuery, validateParams } from '../middleware/validation';
 import { paginationSchema, stellarAddress, safeLabel } from '../schemas/common';
 import { eventService } from '../services/event.service';
+import { createCursorScope, decodeOpaqueCursor, encodeOpaqueCursor } from '../utils/opaque-cursor';
 
 /**
  * @swagger
@@ -159,8 +160,26 @@ eventRouter.get(
   validateQuery(eventListQuerySchema),
   asyncHandler(async (req: Request, res: Response) => {
     const query = (req as any).validatedQuery as z.infer<typeof eventListQuerySchema>;
-    const result = await eventService.listEvents(query);
-    res.json(result);
+    const scope = createCursorScope('events', {
+      limit: query.limit,
+      contract: query.contract,
+      type: query.type,
+      topic: query.topic,
+    });
+    let cursor: string | undefined;
+    if (query.cursor !== undefined) {
+      const decoded = decodeOpaqueCursor(query.cursor, scope);
+      if (typeof decoded !== 'string') {
+        throw new AppError(400, 'Invalid or mismatched cursor', 'INVALID_CURSOR');
+      }
+      cursor = decoded;
+    }
+
+    const result = await eventService.listEvents({ ...query, cursor });
+    res.json({
+      ...result,
+      nextCursor: result.nextCursor ? encodeOpaqueCursor(result.nextCursor, scope) : null,
+    });
   }),
 );
 

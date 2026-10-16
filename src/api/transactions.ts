@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/asyncHandler';
+import { AppError } from '../middleware/errorHandler';
 import { transactionService } from '../services/transaction.service';
 import { conditionalCache } from '../middleware/conditionalCache';
 
@@ -107,7 +108,7 @@ const listSchema = z
  *                       type: array
  *                       items: { $ref: '#/components/schemas/Transaction' }
  *                     nextCursor:
- *                       type: integer
+ *                       type: string
  *                       nullable: true
  *                       description: Legacy ledgerSequence cursor
  *                     hasNext: { type: boolean }
@@ -139,7 +140,35 @@ transactionRouter.get(
   '/',
   asyncHandler(async (req: Request, res: Response) => {
     const q = listSchema.parse(req.query);
-    const result = await transactionService.listTransactions(q);
+    const scope = createCursorScope('transactions', {
+      limit: q.limit,
+      contract: q.contract,
+      account: q.account,
+      status: q.status,
+      ledgerMin: q.ledgerMin,
+      ledgerMax: q.ledgerMax,
+    });
+    let cursor: { ledgerSequence: number; id: string } | undefined;
+    if (q.cursor !== undefined) {
+      const decoded = decodeOpaqueCursor(q.cursor, scope);
+      if (
+        typeof decoded !== 'object' ||
+        decoded === null ||
+        !('ledgerSequence' in decoded) ||
+        typeof decoded.ledgerSequence !== 'number' ||
+        !('id' in decoded) ||
+        typeof decoded.id !== 'string'
+      ) {
+        throw new AppError(400, 'Invalid or mismatched cursor', 'INVALID_CURSOR');
+      }
+      cursor = { ledgerSequence: decoded.ledgerSequence, id: decoded.id };
+    }
+
+    const result = await transactionService.listTransactions({ ...q, cursor });
+    if ('nextCursor' in result && result.nextCursor) {
+      res.json({ ...result, nextCursor: encodeOpaqueCursor(result.nextCursor, scope) });
+      return;
+    }
     res.json(result);
   }),
 );

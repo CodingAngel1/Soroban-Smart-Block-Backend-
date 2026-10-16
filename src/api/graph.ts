@@ -686,7 +686,7 @@ const upstreamQuerySchema = z.object({
 
 /**
  * @swagger
- * /graph/contracts/:address/upstream:
+ * /graph/contracts/{address}/upstream:
  *   get:
  *     summary: Get upstream contract dependencies using frontier-paginated BFS
  *     tags: [Graph]
@@ -756,7 +756,7 @@ const downstreamQuerySchema = z.object({
 
 /**
  * @swagger
- * /graph/contracts/:address/downstream:
+ * /graph/contracts/{address}/downstream:
  *   get:
  *     summary: Get downstream contract dependencies using frontier-paginated BFS
  *     tags: [Graph]
@@ -871,7 +871,7 @@ export function callGraphCacheKey(params: CallGraphQueryParams): string {
 
 /**
  * @swagger
- * /api/v1/graph/contract-calls:
+ * /graph/contract-calls:
  *   get:
  *     summary: Weighted contract-to-contract call graph for visualization
  *     tags: [Graph]

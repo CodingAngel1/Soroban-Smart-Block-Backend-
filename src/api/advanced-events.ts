@@ -25,7 +25,7 @@ const EventFilterSchema = z.object({
 
 /**
  * @swagger
- * /advanced-events:
+ * /events/advanced:
  *   get:
  *     summary: Advanced Events service overview
  *     tags: [Advanced Events]
@@ -39,14 +39,14 @@ advancedEventsRouter.get('/', (_req: Request, res: Response) => {
     description: 'Extended event querying, aggregation, and replay for Soroban contract events',
     capabilities: ['filtering', 'aggregation', 'replay', 'subscriptions', 'streaming'],
     endpoints: [
-      'GET  /advanced-events',
-      'POST /advanced-events/query',
-      'GET  /advanced-events/contracts/:contractId',
-      'GET  /advanced-events/aggregations',
-      'GET  /advanced-events/replay/:txHash',
-      'POST /advanced-events/subscriptions',
-      'GET  /advanced-events/subscriptions',
-      'DELETE /advanced-events/subscriptions/:id',
+      'GET  /events/advanced',
+      'POST /events/advanced/query',
+      'GET  /events/advanced/contracts/:contractId',
+      'GET  /events/advanced/aggregations',
+      'GET  /events/advanced/replay/:txHash',
+      'POST /events/advanced/subscriptions',
+      'GET  /events/advanced/subscriptions',
+      'DELETE /events/advanced/subscriptions/:id',
     ],
   });
 });
@@ -55,7 +55,7 @@ advancedEventsRouter.get('/', (_req: Request, res: Response) => {
 
 /**
  * @swagger
- * /advanced-events/query:
+ * /events/advanced/query:
  *   post:
  *     summary: Query events with advanced filters
  *     tags: [Advanced Events]
@@ -99,7 +99,7 @@ advancedEventsRouter.post('/query', (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /advanced-events/contracts/{contractId}:
+ * /events/advanced/contracts/{contractId}:
  *   get:
  *     summary: Get advanced event analysis for a specific contract
  *     tags: [Advanced Events]
@@ -135,7 +135,7 @@ advancedEventsRouter.get('/contracts/:contractId', (req: Request, res: Response)
 
 /**
  * @swagger
- * /advanced-events/aggregations:
+ * /events/advanced/aggregations:
  *   get:
  *     summary: Get aggregated event statistics across the network
  *     tags: [Advanced Events]
@@ -176,7 +176,7 @@ advancedEventsRouter.get('/aggregations', (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /advanced-events/replay/{txHash}:
+ * /events/advanced/replay/{txHash}:
  *   get:
  *     summary: Replay all events emitted by a specific transaction
  *     tags: [Advanced Events]
@@ -208,7 +208,7 @@ advancedEventsRouter.get('/replay/:txHash', (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /advanced-events/subscriptions:
+ * /events/advanced/subscriptions:
  *   post:
  *     summary: Subscribe to events matching a filter
  *     tags: [Advanced Events]
@@ -257,7 +257,7 @@ advancedEventsRouter.post('/subscriptions', (req: Request, res: Response) => {
 
 /**
  * @swagger
- * /advanced-events/subscriptions:
+ * /events/advanced/subscriptions:
  *   get:
  *     summary: List active event subscriptions
  *     tags: [Advanced Events]
@@ -273,7 +273,7 @@ advancedEventsRouter.get('/subscriptions', (_req: Request, res: Response) => {
 
 /**
  * @swagger
- * /advanced-events/subscriptions/{id}:
+ * /events/advanced/subscriptions/{id}:
  *   delete:
  *     summary: Cancel an event subscription
  *     tags: [Advanced Events]

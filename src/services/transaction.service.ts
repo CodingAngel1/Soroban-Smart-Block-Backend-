@@ -28,7 +28,7 @@ export interface TransactionListFilter {
 
 export interface CursorPaginatedTransactions {
   data: any[];
-  nextCursor: number | null;
+  nextCursor: { ledgerSequence: number; id: string } | null;
   hasNext: boolean;
 }
 
@@ -107,13 +107,17 @@ export class TransactionService {
       where.ledgerSequence = { ...where.ledgerSequence, lt: cursor };
 
       const rows = await this.repo.findMany({
-        where,
+        where: cursorWhere,
         take: limit + 1,
       });
 
       const hasNext = rows.length > limit;
       const data = hasNext ? rows.slice(0, limit) : rows;
-      const nextCursor = hasNext ? (data[data.length - 1] as any).ledgerSequence : null;
+      const last = data[data.length - 1];
+      const nextCursor =
+        hasNext && typeof last?.id === 'string'
+          ? { ledgerSequence: last.ledgerSequence, id: last.id }
+          : null;
 
       return { data, nextCursor, hasNext };
     }

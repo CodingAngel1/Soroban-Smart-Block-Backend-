@@ -2,6 +2,45 @@ import swaggerJsdoc from 'swagger-jsdoc';
 import path from 'path';
 import fs from 'fs';
 
+function mountedApiDocFiles(): string[] {
+  const apiDirectory = path.resolve(__dirname, '../api');
+  const root = ['router.ts', 'router.js']
+    .map((file) => path.join(apiDirectory, file))
+    .find((file) => fs.existsSync(file));
+  if (!root) return [];
+
+  const queue = [root];
+  const visited = new Set<string>();
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (visited.has(file)) continue;
+    visited.add(file);
+
+    const content = fs.readFileSync(file, 'utf8');
+    const importPattern = /(?:from\s*|require\s*\()\s*['"](\.[^'"]+)['"]/g;
+    let match: RegExpExecArray | null;
+    while ((match = importPattern.exec(content)) !== null) {
+      const base = path.resolve(path.dirname(file), match[1]);
+      const candidates = [
+        base,
+        `${base}.ts`,
+        `${base}.js`,
+        path.join(base, 'index.ts'),
+        path.join(base, 'index.js'),
+      ];
+      const dependency = candidates.find(
+        (candidate) =>
+          candidate.startsWith(`${apiDirectory}${path.sep}`) &&
+          fs.existsSync(candidate) &&
+          fs.statSync(candidate).isFile(),
+      );
+      if (dependency && !visited.has(dependency)) queue.push(dependency);
+    }
+  }
+
+  return [...visited].filter((file) => /\.(?:ts|js)$/.test(file));
+}
+
 const options: swaggerJsdoc.Options = {
   definition: {
     openapi: '3.0.0',
@@ -96,13 +135,19 @@ const options: swaggerJsdoc.Options = {
             createdAt: { type: 'string', format: 'date-time' },
           },
         },
-        // Shared error envelope returned by route handlers, e.g. { error: "..." }.
+        // Every HTTP error response includes a stable top-level machine code.
         Error: {
           type: 'object',
+          required: ['code'],
           properties: {
-            error: {
+            code: {
               type: 'string',
-              description: 'Human-readable error message',
+              description:
+                'Stable machine-readable error code; clients should branch on this value.',
+              example: 'VALIDATION_ERROR',
+            },
+            error: {
+              description: 'Endpoint-specific error details or human-readable message.',
               // Neutral fallback; each error response overrides this with a
               // response-level example reflecting that endpoint's real message.
               example: 'Bad request',
@@ -2485,10 +2530,9 @@ const options: swaggerJsdoc.Options = {
     },
     security: [{ ApiKeyAuth: [] }],
   },
-  // Scan all route files for @swagger JSDoc comments
+  // Scan only the API router's dependency graph, excluding orphaned routers.
   apis: [
-    path.join(__dirname, '../api/*.ts'),
-    path.join(__dirname, '../api/*.js'),
+    ...mountedApiDocFiles(),
     path.join(__dirname, '../middleware/*.ts'),
     path.join(__dirname, '../middleware/*.js'),
   ],
