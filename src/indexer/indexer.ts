@@ -39,6 +39,14 @@ import {
 } from '../services/search/full-text-search';
 import { processCheckpointedRange, type CatchUpCheckpointStore } from './catch-up';
 import { getIndexerPauseState } from './worker-control';
+import { eventPersistenceId } from './invariants';
+
+export interface IndexedLedgerRange {
+  network: string;
+  ledgerSequences: number[];
+  transactionHashes: string[];
+  eventIds: string[];
+}
 
 const BATCH = config.indexerBatchSize;
 const WORKERS = config.indexerCatchupWorkers;
@@ -319,7 +327,7 @@ export async function processLedgerRange(
   start: number,
   end: number,
   opts: { force?: boolean } = {},
-): Promise<void> {
+): Promise<IndexedLedgerRange> {
   return withIndexerSpan(
     'indexer.ledger_range',
     { 'ledger.range.start': start, 'ledger.range.end': end },
@@ -506,12 +514,15 @@ async function processLedgerRangeInternal(
   const legacyEventNetworks = new Map(
     existingLegacyEvents.map((event) => [event.id, event.network]),
   );
+  const indexedLedgerSequences = new Set(responsibleSeqs);
+  const indexedTransactionHashes = new Set<string>();
+  const indexedEventIds = new Set<string>();
 
   // Contracts recur across every event in the range — index each address once
   // per processed range rather than once per event.
   const indexedContracts = new Set<string>();
 
-  for (const event of events) {
+  for (const [eventOffset, event] of events.entries()) {
     realtimeHub.publishContractEvent({
       contractId: event.contractId,
       eventType: event.topics[0] ?? 'unknown',
@@ -669,12 +680,14 @@ async function processLedgerRangeInternal(
     stopDecodeEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'decode', status: 'success' });
 
-    const positionKey = event.pagingToken || `${event.ledgerSequence}-${events.indexOf(event)}`;
+    const positionKey = event.pagingToken || `${event.ledgerSequence}-${eventOffset}`;
     const legacyEventId = `${event.transactionHash}-${positionKey}`;
-    const eventId =
-      legacyEventNetworks.get(legacyEventId) === network
-        ? legacyEventId
-        : `${network}-${legacyEventId}`;
+    const eventId = eventPersistenceId(
+      network,
+      event.transactionHash,
+      positionKey,
+      legacyEventNetworks.get(legacyEventId),
+    );
 
     const stopPersistEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
     const savedEvent = await withIndexerSpan(
@@ -699,6 +712,7 @@ async function processLedgerRangeInternal(
     );
     stopPersistEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
+    indexedEventIds.add(eventId);
 
     // Search Stage: index the decoded event for discovery
     await indexSafely('event', () => indexEvent(savedEvent));
