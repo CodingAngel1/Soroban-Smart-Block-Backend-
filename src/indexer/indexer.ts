@@ -39,10 +39,12 @@ import {
 } from '../services/search/full-text-search';
 import { processCheckpointedRange, type CatchUpCheckpointStore } from './catch-up';
 import { getIndexerPauseState } from './worker-control';
+import { WriteLatencyBackpressure, createCatchUpBudget, missingLedgerRanges } from './ledger-range-guard';
 
 const BATCH = config.indexerBatchSize;
 const WORKERS = config.indexerCatchupWorkers;
 const CHECKPOINT_WINDOW_SIZE = 100;
+const writeBackpressure = new WriteLatencyBackpressure();
 
 const catchUpCheckpointStore: CatchUpCheckpointStore = {
   async findUnique({ where: { network_rangeStart_rangeEnd: key } }) {
@@ -453,6 +455,7 @@ async function processLedgerRangeInternal(
 
     // Persist Ledger record
     const stopPersistLedgerTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
+    const writeStartedAt = Date.now();
     await withIndexerSpan('indexer.ledger.persist', { 'ledger.sequence': seq }, () =>
       prismaWrite.ledger.upsert({
         where: { sequence: seq },
@@ -471,6 +474,11 @@ async function processLedgerRangeInternal(
         },
       }),
     );
+    const backpressureDelay = writeBackpressure.record(Date.now() - writeStartedAt);
+    if (backpressureDelay > 0) {
+      logger.warn(`[indexer] database write latency is elevated; delaying ${backpressureDelay}ms`);
+      await new Promise<void>((resolve) => setTimeout(resolve, backpressureDelay));
+    }
     stopPersistLedgerTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
     realtimeHub.publishLedger({
@@ -755,6 +763,12 @@ export async function indexSingleLedger(ledgerSeq: number): Promise<void> {
  * between persistence and checkpointing can safely replay the last batch.
  */
 async function catchUp(from: number, to: number): Promise<boolean> {
+  const budget = createCatchUpBudget();
+  const boundedTo = Math.min(to, from + budget.maxLedgers - 1);
+  if (boundedTo < to) {
+    logger.info(`[catch-up] limiting this pass to ${from}–${boundedTo} (${budget.maxLedgers} ledgers)`);
+    to = boundedTo;
+  }
   const firstWindow = Math.floor((from - 1) / CHECKPOINT_WINDOW_SIZE) * CHECKPOINT_WINDOW_SIZE + 1;
   const windows: Array<[number, number, number, number]> = [];
   for (let windowStart = firstWindow; windowStart <= to; windowStart += CHECKPOINT_WINDOW_SIZE) {
@@ -779,7 +793,9 @@ async function catchUp(from: number, to: number): Promise<boolean> {
             batchSize: BATCH,
             store: catchUpCheckpointStore,
             processRange: processLedgerRange,
-            isPaused: async () => (await getIndexerPauseState()).paused,
+            isPaused: async () =>
+              (await getIndexerPauseState()).paused ||
+              Date.now() - budget.startedAt >= budget.maxElapsedMs,
           })) && complete;
         if (!complete) return false;
       }
@@ -787,6 +803,20 @@ async function catchUp(from: number, to: number): Promise<boolean> {
     }),
   );
   if (workerResults.some((complete) => !complete) || (await getIndexerPauseState()).paused) {
+    return false;
+  }
+  const persisted = await prismaWrite.ledger.findMany({
+    where: { network: getActiveNetwork(), sequence: { gte: from, lte: to } },
+    select: { sequence: true },
+  });
+  const missing = missingLedgerRanges(from, to, persisted.map((ledger) => ledger.sequence));
+  if (missing.length > 0) {
+    for (const gap of missing) {
+      await prismaWrite.ledgerGap.create({
+        data: { startSequence: gap.start, endSequence: gap.end, resolved: false },
+      });
+    }
+    logger.warn(`[catch-up] cursor held at missing ledger range(s): ${missing.map((gap) => `${gap.start}-${gap.end}`).join(', ')}`);
     return false;
   }
   await setLastIndexedLedger(to);
