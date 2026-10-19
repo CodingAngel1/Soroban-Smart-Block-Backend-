@@ -6,7 +6,7 @@ import { prismaWrite, prismaRead } from '../../db';
 import { asyncHandler } from '../../middleware/asyncHandler';
 import { redactSensitiveData } from '../../webhooks/redaction';
 import { encryptSecret, decryptSecret, maskSecret } from '../../webhooks/secretCrypto';
-import { signWebhookBody } from '../../webhooks/webhookVerify';
+import { buildWebhookSignatureHeaders } from '../../webhooks/webhookVerify';
 import {
   safePost,
   assertSafeUrl,
@@ -173,13 +173,12 @@ devWebhooksRouter.post(
 
     // Attempt delivery via the SSRF-guarded safePost so the test endpoint
     // is subject to the same URL validation as real deliveries (#893).
-    // Sign with constant-time HMAC and include X-Webhook-Timestamp for
-    // replay-window enforcement on the receiver side (#884).
+    // Sign with X-Webhook-Timestamp and the timestamp-bound
+    // X-Webhook-Signature-V2 for replay-window enforcement (#884, #1239).
     try {
       const payloadJson = JSON.stringify(payload);
       const plainSecret = decryptSecret(webhook.secret);
-      const timestampMs = Date.now();
-      const signature = signWebhookBody(payloadJson, plainSecret);
+      const signatureHeaders = buildWebhookSignatureHeaders(payloadJson, plainSecret);
 
       // SSRF pre-flight (safePost also validates internally, but we want
       // a clear 400 back to the developer rather than a generic 500).
@@ -196,8 +195,7 @@ devWebhooksRouter.post(
         payloadJson,
         {
           'Content-Type': 'application/json',
-          'X-Webhook-Signature': signature,
-          'X-Webhook-Timestamp': String(timestampMs),
+          ...signatureHeaders,
         },
         10_000,
       );
