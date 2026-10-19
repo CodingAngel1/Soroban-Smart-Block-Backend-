@@ -562,7 +562,8 @@ async function processLedgerRangeInternal(
             getTransactionFromHorizon(event.transactionHash).catch((): null => null),
           ),
       );
-      const rawXdr = (txResult as any)?.envelopeXdr?.toXDR('base64') ?? '';
+      const txResultData = txResult as Record<string, unknown> | null;
+      const rawXdr = typeof (txResultData?.envelopeXdr as { toXDR?: Function } | undefined)?.toXDR === 'function' ? (txResultData?.envelopeXdr as { toXDR(fmt: string): string }).toXDR('base64') : '';
       const decoded = rawXdr
         ? await withIndexerSpan(
             'indexer.transaction.decode',
@@ -580,29 +581,24 @@ async function processLedgerRangeInternal(
 
       // Persist Stage
       const stopPersistTxTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
-      const transaction = await withIndexerSpan(
-        'indexer.transaction.persist',
-        { 'ledger.sequence': event.ledgerSequence },
-        () =>
-          prismaWrite.transaction.upsert({
-            where: { hash: event.transactionHash },
-            update: {},
-            create: {
-              id: uuidv7(),
-              hash: event.transactionHash,
-              ledgerSequence: event.ledgerSequence,
-              ledgerCloseTime: event.ledgerCloseTime,
-              sourceAccount: (txResult as any)?.sourceAccount ?? 'unknown',
-              contractAddress: decoded.contractAddress,
-              functionName: decoded.functionName,
-              functionArgs: (decoded.functionArgs as object) ?? undefined,
-              rawXdr,
-              status: (txResult as any)?.status === 'SUCCESS' ? 'success' : 'failed',
-              humanReadable: decoded.humanReadable,
-              feeCharged: String((txResult as any)?.feeCharged ?? ''),
-            },
-          }),
-      );
+      const transaction = await prismaWrite.transaction.upsert({
+        where: { hash: event.transactionHash },
+        update: {},
+        create: {
+          id: uuidv7(),
+          hash: event.transactionHash,
+          ledgerSequence: event.ledgerSequence,
+          ledgerCloseTime: event.ledgerCloseTime,
+          sourceAccount: String(txResultData?.sourceAccount ?? 'unknown'),
+          contractAddress: decoded.contractAddress,
+          functionName: decoded.functionName,
+          functionArgs: (decoded.functionArgs as object) ?? undefined,
+          rawXdr,
+          status: txResultData?.status === 'SUCCESS' ? 'success' : 'failed',
+          humanReadable: decoded.humanReadable,
+          feeCharged: String(txResultData?.feeCharged ?? ''),
+        },
+      });
       stopPersistTxTimer();
       indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
 
@@ -754,34 +750,60 @@ export async function indexSingleLedger(ledgerSeq: number): Promise<void> {
  * Database upserts use deterministic transaction/event keys, so a crash
  * between persistence and checkpointing can safely replay the last batch.
  */
-async function catchUp(from: number, to: number): Promise<boolean> {
-  const firstWindow = Math.floor((from - 1) / CHECKPOINT_WINDOW_SIZE) * CHECKPOINT_WINDOW_SIZE + 1;
-  const windows: Array<[number, number, number, number]> = [];
-  for (let windowStart = firstWindow; windowStart <= to; windowStart += CHECKPOINT_WINDOW_SIZE) {
-    const windowEnd = windowStart + CHECKPOINT_WINDOW_SIZE - 1;
-    windows.push([windowStart, windowEnd, Math.max(from, windowStart), Math.min(to, windowEnd)]);
+async function upsertCheckpoint(
+  rangeStart: number,
+  rangeEnd: number,
+  lastCommittedLedger: number | null,
+  completed: boolean,
+): Promise<void> {
+  const db = prismaWrite as unknown as Record<string, { upsert: Function; findUnique: Function }>;
+  try {
+    await db.catchUpCheckpoint.upsert({
+      where: { rangeStart_rangeEnd: { rangeStart, rangeEnd } },
+      create: {
+        id: uuidv7(),
+        rangeStart,
+        rangeEnd,
+        lastCommittedLedger,
+        completed,
+      },
+      update: {
+        lastCommittedLedger,
+        completed,
+      },
+    });
+  } catch (err) {
+    // Best-effort: checkpoint failure must not abort the indexing work
+    logger.warn(`[catch-up] checkpoint upsert failed for ${rangeStart}-${rangeEnd}: ${err}`);
   }
   logger.info(`[catch-up] ${windows.length} checkpoint window(s) covering ledgers ${from}–${to}`);
 
-  const concurrency = Math.max(1, WORKERS);
-  const workerResults = await Promise.all(
-    Array.from({ length: Math.min(concurrency, windows.length) }, async (_, worker) => {
-      let complete = true;
-      for (let index = worker; index < windows.length; index += concurrency) {
-        const [rangeStart, rangeEnd, workStart, workEnd] = windows[index];
-        complete =
-          (await processCheckpointedRange({
-            network: getActiveNetwork(),
-            rangeStart,
-            rangeEnd,
-            workStart,
-            workEnd,
-            batchSize: BATCH,
-            store: catchUpCheckpointStore,
-            processRange: processLedgerRange,
-            isPaused: async () => (await getIndexerPauseState()).paused,
-          })) && complete;
-        if (!complete) return false;
+/**
+ * Look up the resume cursor for a chunk from a persisted checkpoint.
+ * Returns the last committed ledger + 1 (i.e. where to resume from), or
+ * `rangeStart` if no checkpoint exists yet.
+ */
+async function getChunkResumeCursor(rangeStart: number, rangeEnd: number): Promise<number> {
+  const db = prismaWrite as unknown as Record<string, { upsert: Function; findUnique: Function }>;
+  try {
+    const row: { lastCommittedLedger: number | null; completed: boolean } | null =
+      await db.catchUpCheckpoint.findUnique({
+        where: { rangeStart_rangeEnd: { rangeStart, rangeEnd } },
+        select: { lastCommittedLedger: true, completed: true },
+      });
+    if (!row) return rangeStart;
+    if (row.completed) {
+      logger.info(`[catch-up] chunk ${rangeStart}-${rangeEnd} already completed — skipping`);
+      return rangeEnd + 1; // signals "nothing to do"
+    }
+    if (row.lastCommittedLedger !== null) {
+      const resume = row.lastCommittedLedger + 1;
+      if (resume <= rangeEnd) {
+        logger.info(
+          `[catch-up] resuming chunk ${rangeStart}-${rangeEnd} from ledger ${resume} ` +
+            `(last committed: ${row.lastCommittedLedger})`,
+        );
+        return resume;
       }
       return complete;
     }),

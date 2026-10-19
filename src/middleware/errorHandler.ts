@@ -152,8 +152,8 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
   let details: Array<{ field: string; issue: string }> | undefined = undefined;
   if (err instanceof ValidationError && err.details) {
     details = err.details;
-  } else if ((err as any).details && Array.isArray((err as any).details)) {
-    details = (err as any).details;
+  } else if ((err as Record<string, unknown>).details && Array.isArray((err as Record<string, unknown>).details)) {
+    details = (err as Record<string, unknown>).details as Array<{ field: string; issue: string }>;
   }
 
   const errorObj: any = {

@@ -25,7 +25,7 @@ export async function dispatchNotifications(payload: NotificationPayload): Promi
     db.tipWebhook.findMany({ where: { active: true } }),
   ]);
 
-  const filtered = subs.filter((s) => matchesFilter(s.filters as any, payload));
+  const filtered = subs.filter((s) => matchesFilter(s.filters as Record<string, unknown>, payload));
 
   await Promise.allSettled([
     ...filtered.map((s) => dispatch(s.channel, s.target, payload)),
