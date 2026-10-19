@@ -27,6 +27,9 @@ import { logger } from './sdk-logger';
 import { metrics, METRIC_NAMES } from './sdk-metrics';
 import { featureFlags, FLAG_NAMES } from './feature-flags';
 import { gracefulDegradation, fallbacks, type ComponentHandler } from './graceful-degradation';
+import { generateAllParallel, BoundedWorkerPool, ParallelGenerationError } from './parallel-generator';
+
+export { generateAllParallel, BoundedWorkerPool, ParallelGenerationError };
 
 const ROOT = path.join(__dirname, '..', '..');
 
@@ -189,7 +192,9 @@ async function main(): Promise<void> {
       swaggerSpec: OpenApiDocument;
     };
     
-    const files = generateAll(swaggerSpec);
+    const files = featureFlags.isEnabled(FLAG_NAMES.PARALLEL_GENERATION, context)
+      ? await generateAllParallel(swaggerSpec, { correlationId: context.correlationId })
+      : generateAll(swaggerSpec);
     
     // Handle drift check and file writing
     const drift: string[] = [];
