@@ -31,6 +31,11 @@ class FeatureFlags {
       description: 'Generate Python SDK',
     });
 
+    this.registerFlag('java-generation', {
+      enabled: true,
+      description: 'Generate Java SDK',
+    });
+
     this.registerFlag('drift-detection', {
       enabled: true,
       description: 'Enable drift detection in CI',
@@ -203,6 +208,7 @@ export const featureFlags = new FeatureFlags();
 export const FLAG_NAMES = {
   TYPESCRIPT_GENERATION: 'typescript-generation',
   PYTHON_GENERATION: 'python-generation',
+  JAVA_GENERATION: 'java-generation',
   DRIFT_DETECTION: 'drift-detection',
   BREAKING_CHANGE_DETECTION: 'breaking-change-detection',
   EXPERIMENTAL_GENERATORS: 'experimental-generators',

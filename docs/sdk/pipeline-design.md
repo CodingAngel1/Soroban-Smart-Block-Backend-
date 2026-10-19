@@ -518,7 +518,8 @@ npm run sdk:test:chaos
 ## Future Enhancements
 
 ### Planned Features
-- [ ] Additional language emitters (Go, Java, C#)
+- [x] Java language emitter (`packages/java-client`) with parity against OpenAPI contract
+- [ ] Additional language emitters (Go, C#)
 - [ ] Real-time spec monitoring and auto-generation
 - [ ] Advanced caching strategies
 - [ ] Distributed generation for large specs
