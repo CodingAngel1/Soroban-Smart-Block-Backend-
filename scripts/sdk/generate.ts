@@ -29,6 +29,7 @@ import { logger } from './sdk-logger';
 import { metrics, METRIC_NAMES } from './sdk-metrics';
 import { featureFlags, FLAG_NAMES } from './feature-flags';
 import { gracefulDegradation, fallbacks, type ComponentHandler } from './graceful-degradation';
+import { computeCacheKey, sdkCache } from './cache';
 
 const ROOT = path.join(__dirname, '..', '..');
 
@@ -52,10 +53,32 @@ function generateCoreFiles(doc: OpenApiDocument, ops: NormalizedOperation[], fin
   ];
 }
 
-export function generateAll(doc: OpenApiDocument): GeneratedFile[] {
+export interface GenerateOptions {
+  useCache?: boolean;
+  noCache?: boolean;
+}
+
+export function generateAll(doc: OpenApiDocument, options: GenerateOptions = {}): GeneratedFile[] {
   const startTime = Date.now();
   const context = { correlationId: logger.getCorrelationId() };
   
+  const cachingEnabled = !options.noCache && (
+    options.useCache === true ||
+    featureFlags.isEnabled(FLAG_NAMES.CACHE_OPTIMIZATION, context) ||
+    process.env.SDK_CACHE_ENABLED === 'true' ||
+    process.argv.includes('--cache')
+  );
+
+  let cacheData: ReturnType<typeof computeCacheKey> | null = null;
+  if (cachingEnabled) {
+    cacheData = computeCacheKey(doc, featureFlags.getEnabledFlags());
+    const cached = sdkCache.get(cacheData.cacheKey);
+    if (cached.hit && cached.files) {
+      metrics.incrementCounter(METRIC_NAMES.GENERATION_SUCCESS);
+      return cached.files;
+    }
+  }
+
   logger.info('Starting SDK generation', { 
     spec_version: doc.info?.version,
     enabled_flags: featureFlags.getEnabledFlags(),
@@ -138,6 +161,10 @@ export function generateAll(doc: OpenApiDocument): GeneratedFile[] {
   metrics.incrementCounter(METRIC_NAMES.FILES_GENERATED, files.length);
   metrics.incrementCounter(METRIC_NAMES.GENERATION_SUCCESS);
 
+  if (cachingEnabled && cacheData) {
+    sdkCache.set(cacheData.metadata, files);
+  }
+
   return files;
 }
 
@@ -192,11 +219,15 @@ export async function generateAllWithDegradation(doc: OpenApiDocument): Promise<
 async function main(): Promise<void> {
   const startTime = Date.now();
   const check = process.argv.includes('--check');
+  const noCache = process.argv.includes('--no-cache');
+  const useCache = process.argv.includes('--cache');
   const context = { correlationId: logger.getCorrelationId() };
   
   logger.info('SDK generation started', { 
     mode: check ? 'check' : 'generate',
-    correlation_id: context.correlationId
+    correlation_id: context.correlationId,
+    no_cache: noCache,
+    cache: useCache
   });
   
   try {
@@ -206,7 +237,7 @@ async function main(): Promise<void> {
       swaggerSpec: OpenApiDocument;
     };
     
-    const files = generateAll(swaggerSpec);
+    const files = generateAll(swaggerSpec, { noCache, useCache });
     
     // Handle drift check and file writing
     const drift: string[] = [];
