@@ -9,7 +9,6 @@
 
 import express from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
 import morgan from 'morgan';
 import swaggerUi from 'swagger-ui-express';
 
@@ -17,6 +16,7 @@ import { config } from './config';
 import { router } from './api/router';
 import { billingRouter } from './services/stripe-billing';
 import { correlationMiddleware } from './middleware/correlation';
+import { securityHeaders } from './middleware/securityHeaders';
 import { CORS_ALLOWED_HEADERS, CORS_EXPOSED_HEADERS } from './middleware/corsHeaders';
 import { versioningMiddleware } from './middleware/versioning';
 import { tieredRateLimit } from './middleware/rateLimit';
@@ -70,49 +70,12 @@ export function createApp(options: AppOptions): express.Express {
   const app = express();
   configureApiJsonSerialization(app);
   app.set('trust proxy', config.trustProxy);
-  app.use(rejectUntrustedForwardedHeaders);
 
   // ── Security Headers (Issue #274) ─────────────────────────────────────────────
-  // Helmet provides HSTS, X-Frame-Options, X-Content-Type-Options, and more.
-  app.use(
-    helmet({
-      // Content-Security-Policy: restrict resource origins, block inline execution
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:', 'https:'],
-          connectSrc: ["'self'"],
-          fontSrc: ["'self'"],
-          objectSrc: ["'none'"],
-          mediaSrc: ["'none'"],
-          frameSrc: ["'none'"],
-          frameAncestors: ["'none'"],
-          formAction: ["'self'"],
-          upgradeInsecureRequests: [],
-        },
-      },
-      // HTTP Strict Transport Security: 1 year, include subdomains
-      hsts: {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true,
-      },
-      // Prevents MIME-type sniffing
-      noSniff: true,
-      // Denies framing — defence against clickjacking
-      frameguard: { action: 'deny' },
-      // Referrer policy: only send origin on same-origin requests
-      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-      // Remove X-Powered-By
-      hidePoweredBy: true,
-      // XSS filter (legacy browsers)
-      xssFilter: true,
-      // Prevent IE from opening downloads in-site
-      ieNoOpen: true,
-    }),
-  );
+  // Must stay ahead of every route/router — and of early rejections such as the
+  // untrusted-proxy-header guard below — so every response carries the headers.
+  app.use(securityHeaders());
+  app.use(rejectUntrustedForwardedHeaders);
 
   // ── CORS (issue #892) ─────────────────────────────────────────────────────
   //
