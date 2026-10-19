@@ -63,3 +63,26 @@ whose `network` matches are scored, so testnet resets or devnet churn never
 affect the mainnet scorecard. Records written without `network` (before #1245)
 are excluded and counted in `unattributedJobs`; set `network` on new ETL
 lineage records to have them scored.
+
+## Schema compatibility: Kafka events → Parquet (#1247)
+
+`tests/analytics/schema-compat.test.ts` guards both seams of the pipeline using
+`src/analytics/etl/schema-compat.ts`:
+
+- **CDC → Parquet rows.** Debezium-shaped CDC records are run through
+  `transformRecord` and the Parquet sink (`writePartitionToS3`, S3 mocked); every
+  written row must validate against `ANALYTICS_PARQUET_SCHEMA` (required columns
+  present, INT columns are safe integers, no columns outside the schema), and the
+  transform's output keys must equal the schema's columns.
+- **Registry events → Parquet columns.** Each `CORE_SCHEMAS` subject must be
+  writable losslessly: `long`/`int`/`double` may land in their numeric column or a
+  UTF8 decimal string (fees and amounts are strings in Parquet), and an optional
+  event field may not feed a required column. Fields with no column (e.g.
+  `token_in`/`token_out` on `soroban.swap.executed`) are reported as
+  `droppedFields`.
+
+When changing either schema, update `ANALYTICS_PARQUET_SCHEMA` (and bump the
+`x-iceberg-schema-version` object metadata for breaking changes) in the same
+change; these tests fail on drift. Note for multi-network deployments: the
+transform falls back to `network_id = 'testnet'` when a CDC row has no
+`networkId`, so non-testnet sources must emit it for partitions to be correct.
