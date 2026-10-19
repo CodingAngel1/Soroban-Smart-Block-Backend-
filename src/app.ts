@@ -22,6 +22,7 @@ import { versioningMiddleware } from './middleware/versioning';
 import { tieredRateLimit } from './middleware/rateLimit';
 import { metricsMiddleware } from './middleware/metricsMiddleware';
 import { sanitizeInputs, requestSizeGuard } from './middleware/sanitize';
+import { MAX_MULTIPART_REQUEST_BYTES } from './middleware/uploadValidation';
 import { i18nMiddleware } from './i18n';
 import {
   registry,
@@ -173,7 +174,9 @@ export function createApp(options: AppOptions): express.Express {
   );
 
   // Request size guard before body parsing (Issue #274)
-  app.use(requestSizeGuard(1_048_576)); // 1 MB
+  // 1 MB for regular bodies; multipart uploads are capped here at the largest
+  // upload boundary and per route by middleware/uploadValidation.ts (#1238).
+  app.use(requestSizeGuard(1_048_576, { multipartLimitBytes: MAX_MULTIPART_REQUEST_BYTES }));
 
   app.use(publicErrorCodeMiddleware);
   app.use(express.json({ limit: '1mb' }));
