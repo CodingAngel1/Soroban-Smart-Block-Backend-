@@ -38,3 +38,28 @@ the Parquet files written and the ledger range they cover
 - Lineage records live in the ETL process's in-memory store (S3-backed in
   production); publish manifests from the process that ran the jobs, or lineage
   reports `job_not_found`.
+
+## Data-quality scorecard (#1246)
+
+`GET /api/v1/datasets/quality-scorecard?network=<testnet|mainnet|devnet>&limit=<1-500>`
+aggregates the most recent `limit` (default 100) ETL lineage records for one
+network into a score per indexed table (`src/analytics/data-quality/scorecard.ts`):
+
+```
+score = 100 × checkPassRate × (1 − rowRejectRate) × jobSuccessRate
+```
+
+- Any failed `critical` check caps the table at 59 (grade F). Grades: A ≥ 90,
+  B ≥ 80, C ≥ 70, D ≥ 60, F otherwise.
+- Checks named `<check>:<table>` count only toward that table; unscoped checks
+  (e.g. `file_size_check`) count toward every source table of the job.
+- Tables without recorded checks report `score: null` rather than a perfect score.
+- `overall` is the mean of the scored tables.
+
+### Network implications
+
+`network` defaults to the deployment's `STELLAR_NETWORK`. Only lineage records
+whose `network` matches are scored, so testnet resets or devnet churn never
+affect the mainnet scorecard. Records written without `network` (before #1245)
+are excluded and counted in `unattributedJobs`; set `network` on new ETL
+lineage records to have them scored.

@@ -3,6 +3,7 @@
  *
  * Public:
  *   GET  /api/v1/datasets                              — catalog with schema + freshness
+ *   GET  /api/v1/datasets/quality-scorecard            — per-network data-quality scorecard (#1246)
  *   GET  /api/v1/datasets/:dataset                     — dataset detail
  *   GET  /api/v1/datasets/:dataset/manifests           — published snapshots (newest first)
  *   GET  /api/v1/datasets/:dataset/manifests/latest    — latest snapshot manifest
@@ -19,6 +20,9 @@ import { z } from 'zod';
 import { adminAuth } from '../middleware/adminAuth';
 import { config } from '../config';
 import { buildDatasetLineage } from '../analytics/lineage';
+import { listLineage } from '../analytics/data-quality/checks';
+import { buildQualityScorecard } from '../analytics/data-quality/scorecard';
+import { allProfiles } from '../profiles';
 
 export type DatasetId = 'transactions' | 'events' | 'contracts' | 'tokens';
 export type DatasetFormat = 'parquet' | 'csv';
@@ -194,6 +198,20 @@ export const publicDatasetsRouter = Router();
 
 publicDatasetsRouter.get('/', (_req: Request, res: Response) => {
   res.json({ data: Object.values(DATASETS).map(describe) });
+});
+
+publicDatasetsRouter.get('/quality-scorecard', (req: Request, res: Response) => {
+  const network = req.query.network === undefined ? config.stellarNetwork : String(req.query.network);
+  if (!Object.prototype.hasOwnProperty.call(allProfiles, network)) {
+    res.status(400).json({ error: `Unknown network. Valid values: ${Object.keys(allProfiles).join(', ')}` });
+    return;
+  }
+  const limit = req.query.limit === undefined ? 100 : Number(req.query.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+    res.status(400).json({ error: 'limit must be an integer between 1 and 500' });
+    return;
+  }
+  res.json(buildQualityScorecard(listLineage(limit), network));
 });
 
 publicDatasetsRouter.get('/:dataset', (req: Request, res: Response) => {
