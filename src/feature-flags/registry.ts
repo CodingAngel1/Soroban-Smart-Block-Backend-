@@ -123,6 +123,14 @@ export const FEATURE_FLAG_DEFINITIONS: FlagDefinition[] = [
     envVar: 'ENABLE_TRY_IT',
     defaultEnabled: true,
   },
+  {
+    key: 'enterpriseSso',
+    description:
+      'Enterprise SSO / OIDC login (PLT09 / #1030). Enables OIDC provider registration, org auto-provisioning, and the /auth/sso/* routes. Requires sso_providers, sso_orgs, sso_sessions, and sso_audit_events tables.',
+    envVar: 'ENABLE_ENTERPRISE_SSO',
+    requiredTables: ['sso_providers', 'sso_orgs', 'sso_sessions', 'sso_audit_events'],
+    defaultEnabled: false,
+  },
 ];
 
 const byKey = new Map(FEATURE_FLAG_DEFINITIONS.map((def) => [def.key, def]));
