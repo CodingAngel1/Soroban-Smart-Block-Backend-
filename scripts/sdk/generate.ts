@@ -28,8 +28,24 @@ import { metrics, METRIC_NAMES } from './sdk-metrics';
 import { featureFlags, FLAG_NAMES } from './feature-flags';
 import { gracefulDegradation, fallbacks, type ComponentHandler } from './graceful-degradation';
 import { generateAllParallel, BoundedWorkerPool, ParallelGenerationError } from './parallel-generator';
+import {
+  generatePartitioned,
+  PartitionedGenerationError,
+  partitionOperations,
+  resolveSharedSchemas,
+  type PartitionConfig,
+} from './partitioned-generator';
 
-export { generateAllParallel, BoundedWorkerPool, ParallelGenerationError };
+export {
+  generateAllParallel,
+  BoundedWorkerPool,
+  ParallelGenerationError,
+  generatePartitioned,
+  PartitionedGenerationError,
+  partitionOperations,
+  resolveSharedSchemas,
+  type PartitionConfig,
+};
 
 const ROOT = path.join(__dirname, '..', '..');
 

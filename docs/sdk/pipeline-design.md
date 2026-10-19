@@ -521,7 +521,7 @@ npm run sdk:test:chaos
 - [x] Additional language emitters (C# implemented in `packages/dotnet-client`; Go, Java planned)
 - [ ] Real-time spec monitoring and auto-generation
 - [ ] Advanced caching strategies
-- [ ] Distributed generation for large specs
+- [x] Distributed generation for large specs (bounded partitioning in `scripts/sdk/partitioned-generator.ts`)
 - [ ] Machine learning for spec quality analysis
 
 ### Performance Improvements
