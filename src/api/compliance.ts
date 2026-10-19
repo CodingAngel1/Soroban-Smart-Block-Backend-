@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { prismaRead } from '../db';
 import * as compliance from '../services/compliance';
 import { sensitiveReadLog } from '../middleware/sensitiveReadLog';
+import { isOutboundUrlAllowed } from '../webhooks/ssrf-guard';
 
 export const complianceRouter = Router();
 
@@ -392,7 +393,9 @@ complianceRouter.post(
   '/webhooks',
   asyncHandler(async (req: Request, res: Response) => {
     const schema = z.object({
-      url: z.string().url(),
+      url: z.string().url().refine(isOutboundUrlAllowed, {
+        message: 'Webhook URL must be a public HTTPS URL',
+      }),
       events: z
         .array(z.enum(['match.found', 'list.updated', 'address.status_changed', 'match.reviewed']))
         .min(1),

@@ -7,24 +7,20 @@ import { asyncHandler } from '../../middleware/asyncHandler';
 import { redactSensitiveData } from '../../webhooks/redaction';
 import { encryptSecret, decryptSecret, maskSecret } from '../../webhooks/secretCrypto';
 import { signWebhookBody } from '../../webhooks/webhookVerify';
-import { safePost, assertSafeUrl, SsrfBlockedError } from '../../webhooks/ssrf-guard';
+import {
+  safePost,
+  assertSafeUrl,
+  isOutboundUrlAllowed,
+  SsrfBlockedError,
+} from '../../webhooks/ssrf-guard';
 
 export const devWebhooksRouter = Router();
 
-const isAllowedUrl = (raw: string): boolean => {
-  try {
-    const parsed = new URL(raw);
-    const isLocal =
-      parsed.hostname === 'localhost' ||
-      parsed.hostname === '127.0.0.1' ||
-      parsed.hostname === '::1';
-    return parsed.protocol === 'https:' || (isLocal && process.env.NODE_ENV !== 'production');
-  } catch {
-    return false;
-  }
-};
-
-const httpsUrl = z.string().url().refine(isAllowedUrl, { message: 'Webhook URL must use HTTPS' });
+// Shared outbound URL policy (#1237): HTTPS (HTTP only in dev profiles), no
+// credentials, no literal private/loopback/link-local IPs or internal names.
+const httpsUrl = z.string().url().refine(isOutboundUrlAllowed, {
+  message: 'Webhook URL must be a public HTTPS URL',
+});
 
 const createWebhookSchema = z.object({
   developerId: z.string(),
