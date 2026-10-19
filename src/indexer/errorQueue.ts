@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { logger } from '../logger';
 import { config } from '../config';
 import { classifyFailureReason } from './failure-parser';
+import { sanitizeMetricLabelValue } from '../lib/metric-labels';
 import { config } from '../config';
 import {
   indexerErrorQueueDepth,
@@ -150,7 +151,7 @@ export async function moveToDeadLetter(dlData: {
   // operators can see poison-vs-exhaustion mix and alert on DLQ rate.
   indexerErrorDlqTotal.inc({
     network: config.stellarNetwork,
-    reason: dlData.reason ?? classifyFailureReason(dlData.errorMsg),
+    reason: sanitizeMetricLabelValue(dlData.reason ?? classifyFailureReason(dlData.errorMsg)),
   });
   await prisma.deadLetterItem.create({
     data: {

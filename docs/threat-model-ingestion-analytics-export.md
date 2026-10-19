@@ -50,7 +50,7 @@ advances the checkpoint in `src/indexer/checkpoint.ts`. Failures go to
 | Spoofing | Malicious or misconfigured RPC returns forged ledgers | RPC failover and per-network endpoints (`src/indexer/rpc.ts`, `docs/stellar-rpc-failover.md`); deep reorg check against remote metadata in `src/indexer/indexer.ts` | No cross-endpoint quorum; a single compromised endpoint is trusted until reconciliation runs |
 | Tampering | Crafted XDR crashes or mis-decodes into wrong rows | Decode via `@stellar/stellar-sdk` types in `src/indexer/decoder.ts`; poison detection and `MAX_RETRIES` isolation to the DLQ in `src/indexer/errorQueue.ts` | DLQ replay must be operator-initiated (`docs/dead-letter-queue-runbook.md`) |
 | Repudiation | Unknown which endpoint produced a bad ledger | RPC metrics with `network`/`endpoint` labels (`src/indexer/rpc-metrics.ts`) | Endpoint provenance is not stored per row |
-| Information disclosure | Raw payloads from DLQ leak via logs or metrics | Bounded metric labels (`indexer_error_dlq_total{network,reason}`) in `src/metrics.ts` | Log lines still include item ids; keep log access restricted |
+| Information disclosure | Raw payloads from DLQ leak via logs or metrics | Bounded metric labels (`indexer_error_dlq_total{network,reason}`) in `src/metrics.ts`; `reason` passed through `sanitizeMetricLabelValue` (`src/lib/metric-labels.ts`) | Log lines still include item ids; keep log access restricted |
 | Denial of service | Oversized ledgers or event floods stall ingestion | Batch prefetch with bounded concurrency, adaptive polling (`src/indexer/adaptive-polling.ts`), graceful degradation (`src/indexer/graceful-degradation.ts`), freshness SLO (`docs/indexer-freshness-slo.md`) | — |
 | Elevation of privilege | Ingested contract metadata (names, NFT URIs) used to reach internal hosts | SSRF protections for outbound metadata fetches (`SSRF_DNS_REBINDING_FIX.md`, `src/indexer/nft-metadata-fetcher.ts`) | — |
 
@@ -113,13 +113,20 @@ are published by operators through `adminAuth`.
 ## 6. Observability as an exfiltration channel
 
 Prometheus labels and logs are readable by a wider audience than the database.
-HTTP route labels are normalised by `normaliseRoute` in
-`src/middleware/metricsMiddleware.ts` and `src/middleware/errorHandler.ts`
-(UUIDs, cuid-like ids and numbers only). Unmatched routes fall back to the raw
-`req.path`, so account/contract identifiers (`G...`, `C...` strkeys, 64-hex
-hashes) can reach label values; this is a known gap. `/metrics` access is
+HTTP route labels go through `normaliseRouteLabel` in `src/lib/metric-labels.ts`
+(used by `src/middleware/metricsMiddleware.ts` and `src/middleware/errorHandler.ts`),
+which replaces Stellar strkeys (`G...` accounts, `C...` contracts, `M...` muxed,
+etc.) with `:address`, 64-hex hashes with `:hash`, and UUID/cuid/numeric ids
+with `:id`, then caps the value at 128 characters. Free-form label values (for
+example the DLQ `reason`) use `sanitizeMetricLabelValue`. `/metrics` access is
 restricted (`tests/metrics-access.test.ts`). New metrics must use bounded label
-sets; never pass request-derived identifiers as label values.
+sets; any label not drawn from a fixed allowlist must be passed through
+`sanitizeMetricLabelValue`.
+
+Rollout note: for unmatched routes (404s) and error-handler metrics, `route`
+values that previously contained raw identifiers now read e.g.
+`/api/v1/contracts/:address`. Dashboards or alerts filtering on a specific raw
+address must switch to logs/traces; aggregate series are unaffected.
 
 ## 7. Compatibility and rollout
 
