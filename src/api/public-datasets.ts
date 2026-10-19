@@ -6,6 +6,7 @@
  *   GET  /api/v1/datasets/:dataset                     — dataset detail
  *   GET  /api/v1/datasets/:dataset/manifests           — published snapshots (newest first)
  *   GET  /api/v1/datasets/:dataset/manifests/latest    — latest snapshot manifest
+ *   GET  /api/v1/datasets/:dataset/manifests/:id/lineage — source ledgers / ETL jobs behind a snapshot (#1245)
  * Admin:
  *   POST /api/v1/datasets/:dataset/manifests           — publish a generated snapshot manifest
  *
@@ -16,6 +17,8 @@ import { Router, Request, Response } from 'express';
 import { createHash } from 'crypto';
 import { z } from 'zod';
 import { adminAuth } from '../middleware/adminAuth';
+import { config } from '../config';
+import { buildDatasetLineage } from '../analytics/lineage';
 
 export type DatasetId = 'transactions' | 'events' | 'contracts' | 'tokens';
 export type DatasetFormat = 'parquet' | 'csv';
@@ -41,9 +44,13 @@ export interface DatasetFile {
 export interface DatasetManifest {
   id: string;
   dataset: DatasetId;
+  /** Network the snapshot was indexed from (the deployment's network profile). */
+  network: string;
   schemaVersion: number;
   ledgerRange: { from: number; to: number };
   files: DatasetFile[];
+  /** ETL jobs (see `EtlLineageRecord`) that produced the files — lineage from source ledgers. */
+  etlJobIds: string[];
   totalRows: number;
   totalBytes: number;
   publishedAt: string;
@@ -141,6 +148,10 @@ const PublishSchema = z
       to: z.number().int().nonnegative(),
     }),
     files: z.array(FileSchema).min(1).max(1_000),
+    etlJobIds: z
+      .array(z.string().regex(/^[A-Za-z0-9_\-:.]{1,128}$/, 'Invalid ETL job id'))
+      .max(100)
+      .optional(),
   })
   .refine((b) => b.ledgerRange.to >= b.ledgerRange.from, 'ledgerRange.to must be >= from');
 
@@ -209,6 +220,17 @@ publicDatasetsRouter.get('/:dataset/manifests/latest', (req: Request, res: Respo
   res.json(latest);
 });
 
+publicDatasetsRouter.get('/:dataset/manifests/:id/lineage', (req: Request, res: Response) => {
+  const def = getDataset(req, res);
+  if (!def) return;
+  const manifest = manifests.get(def.id)?.find((m) => m.id === req.params.id);
+  if (!manifest) {
+    res.status(404).json({ error: 'Manifest not found' });
+    return;
+  }
+  res.json(buildDatasetLineage(manifest));
+});
+
 publicDatasetsRouter.post('/:dataset/manifests', adminAuth, (req: Request, res: Response) => {
   const def = getDataset(req, res);
   if (!def) return;
@@ -243,12 +265,14 @@ publicDatasetsRouter.post('/:dataset/manifests', adminAuth, (req: Request, res: 
       .digest('hex')
       .slice(0, 16),
     dataset: def.id,
+    network: config.stellarNetwork,
     schemaVersion: SCHEMA_VERSION,
     ledgerRange: {
       from: parsed.data.ledgerRange.from,
       to: parsed.data.ledgerRange.to,
     },
     files,
+    etlJobIds: [...new Set(parsed.data.etlJobIds ?? [])],
     totalRows: files.reduce((s, f) => s + f.rows, 0),
     totalBytes: files.reduce((s, f) => s + f.bytes, 0),
     publishedAt,
