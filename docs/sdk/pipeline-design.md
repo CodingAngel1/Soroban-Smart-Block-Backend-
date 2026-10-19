@@ -518,7 +518,7 @@ npm run sdk:test:chaos
 ## Future Enhancements
 
 ### Planned Features
-- [ ] Additional language emitters (Go, Java, C#)
+- [x] Additional language emitters (C# implemented in `packages/dotnet-client`; Go, Java planned)
 - [ ] Real-time spec monitoring and auto-generation
 - [ ] Advanced caching strategies
 - [ ] Distributed generation for large specs
