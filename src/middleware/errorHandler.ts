@@ -10,6 +10,7 @@
  * app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
  */
 
+import { randomUUID } from 'node:crypto';
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../logger';
 import { config } from '../config';
@@ -21,6 +22,11 @@ import {
   classifyError,
   buildRecoveryHint,
 } from '../types/errors';
+import {
+  redactSensitiveText,
+  redactSensitiveObject,
+  createErrorFingerprint,
+} from '../utils/structuredErrorReporter';
 
 /* ─── AppError (backward-compatible) ─────────────────────────────────────── */
 
@@ -152,29 +158,38 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
   let details: Array<{ field: string; issue: string }> | undefined = undefined;
   if (err instanceof ValidationError && err.details) {
     details = err.details;
-  } else if ((err as any).details && Array.isArray((err as any).details)) {
-    details = (err as any).details;
+  } else {
+    const maybeDetails = (err as unknown as { details?: unknown }).details;
+    if (Array.isArray(maybeDetails)) {
+      details = maybeDetails as Array<{ field: string; issue: string }>;
+    }
   }
 
-  const errorObj: any = {
+  const rawMessage =
+    config.nodeEnv !== 'production' || err instanceof AppError
+      ? err.message || 'Internal Server Error'
+      : statusCode < 500
+        ? err.message || 'Bad request'
+        : 'Internal Server Error';
+
+  const sanitizedMessage = redactSensitiveText(rawMessage);
+  const sanitizedStack = err.stack ? redactSensitiveText(err.stack) : undefined;
+  const fingerprint = createErrorFingerprint(code, sanitizedMessage, err.stack);
+  const errorId = (req as unknown as { errorId?: string }).errorId ?? randomUUID();
+
+  const errorObj: StructuredErrorResponse['error'] = {
     code,
-    // In production, only expose messages from known AppError instances.
-    // Raw err.message can contain SQL queries, file paths, or internal stack
-    // details that help attackers fingerprint the stack. (#891)
-    message:
-      config.nodeEnv !== 'production' || err instanceof AppError
-        ? err.message || 'Internal Server Error'
-        : statusCode < 500
-          ? err.message || 'Bad request'
-          : 'Internal Server Error',
+    message: sanitizedMessage,
   };
 
   if (details) {
-    errorObj.details = details;
+    errorObj.details = redactSensitiveObject(
+      details as unknown as Record<string, unknown>,
+    ) as unknown as Array<{ field: string; issue: string }>;
   }
 
   if (config.nodeEnv === 'development') {
-    errorObj.stack = err.stack;
+    errorObj.stack = sanitizedStack;
   }
 
   if (recovery) {
@@ -188,16 +203,20 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
     meta: {
       requestId,
       timestamp: new Date().toISOString(),
+      fingerprint,
+      errorId,
     },
   };
 
   // Structured logging
-  const logMeta: Record<string, unknown> = {
+  const rawLogMeta: Record<string, unknown> = {
     requestId,
+    errorId,
+    fingerprint,
     code,
     statusCode,
     severity: classification.severity,
-    error: err.message,
+    error: redactSensitiveText(err.message),
     method: req.method,
     endpoint: req.path,
     route: normaliseRoute(req.path),
@@ -208,15 +227,17 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
 
   // Add auth context when available
   if (req.user) {
-    logMeta.userId = req.user.id;
-    logMeta.userRole = req.user.role;
-    logMeta.userTier = req.user.tier;
+    rawLogMeta.userId = req.user.id;
+    rawLogMeta.userRole = req.user.role;
+    rawLogMeta.userTier = req.user.tier;
   }
 
   if (req.apiKey) {
-    logMeta.apiKeyId = req.apiKey.id;
-    logMeta.apiKeyTier = req.apiKey.tier;
+    rawLogMeta.apiKeyId = req.apiKey.id;
+    rawLogMeta.apiKeyTier = req.apiKey.tier;
   }
+
+  const logMeta = redactSensitiveObject(rawLogMeta);
 
   // Rate-limited logging
   if (shouldLogError(code)) {
@@ -227,7 +248,13 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
     }
   } else {
     // Still log at debug level so we don't lose visibility entirely
-    logger.debug('Error (rate-limited logging)', { requestId, code, error: err.message });
+    logger.debug('Error (rate-limited logging)', {
+      requestId,
+      errorId,
+      fingerprint,
+      code,
+      error: redactSensitiveText(err.message),
+    });
   }
 
   // Prometheus metrics
@@ -242,12 +269,13 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
   // error responses with logs even if they only read headers. (#891)
   if (!res.headersSent) {
     res.setHeader('X-Request-Id', requestId);
+    res.setHeader('X-Error-Fingerprint', fingerprint);
   }
   res.status(statusCode).json(responseBody);
 } // <--- Closes the errorHandler function properly
 
 /** Any error that carries a numeric statusCode is treated as an HTTP error. */
-function hasStatusCode(err: unknown): err is { statusCode: number; message: string } {
+function _hasStatusCode(err: unknown): err is { statusCode: number; message: string } {
   return (
     typeof err === 'object' &&
     err !== null &&
