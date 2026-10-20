@@ -298,11 +298,11 @@ export function buildSafeAxios(
     // Dedicated agents with pinned DNS lookup
     httpAgent: new HttpAgent({
       keepAlive: false,
-      lookup: lookup as any, // Node's types are slightly different but compatible
+      lookup: lookup as unknown as typeof import('dns').lookup, // Node's types are slightly different but compatible
     }),
     httpsAgent: new HttpsAgent({
       keepAlive: false,
-      lookup: lookup as any,
+      lookup: lookup as unknown as typeof import('dns').lookup,
     }),
   });
 }
