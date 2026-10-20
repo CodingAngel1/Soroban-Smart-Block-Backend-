@@ -234,6 +234,15 @@ const envSchema = z.object({
   WS_SECRET: z.string().optional(),
   WEBHOOK_SECRET: z.string().optional(),
 
+  // PLT09 / #1030 — Enterprise SSO / OIDC
+  // Set ENABLE_ENTERPRISE_SSO=true to activate the /auth/sso/* routes.
+  // SSO_CLIENT_SECRETS_STRATEGY: "hash" (default, secrets stored as SHA-256)
+  //   or "vault" (secrets fetched from an external secrets manager at runtime).
+  ENABLE_ENTERPRISE_SSO: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => v === true || v === 'true' || v === '1')
+    .default(false),
+
   // #907 — /metrics access control. Comma-separated IP/CIDR allowlist and/or
   // a shared bearer token; see src/middleware/metricsAuth.ts.
   METRICS_ALLOWED_IPS: z.string().default(''),
