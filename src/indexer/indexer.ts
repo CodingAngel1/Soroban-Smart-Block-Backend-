@@ -20,7 +20,8 @@ import {
   fetchLedgerMetadata,
   fetchLedgerMetadataBatch,
 } from './rpc';
-import { decodeTransaction, decodeEvent } from './decoder';
+import { decodeTransaction, decodeEventStrict } from './decoder';
+import { enqueueFailure, recordLedgerDecodeError } from './errorQueue';
 import { decodeZkpVerification, recordZkpVerification } from './zkp-verifier';
 import { processAaTransaction } from './aa-indexer';
 import { feedOrchestrator } from '../feed/orchestrator';
@@ -511,7 +512,7 @@ async function processLedgerRangeInternal(
   // per processed range rather than once per event.
   const indexedContracts = new Set<string>();
 
-  for (const event of events) {
+  for (const [eventIndex, event] of events.entries()) {
     realtimeHub.publishContractEvent({
       contractId: event.contractId,
       eventType: event.topics[0] ?? 'unknown',
@@ -659,22 +660,59 @@ async function processLedgerRangeInternal(
     }
     indexedTransactionHashes.add(event.transactionHash);
 
-    // Decode & Persist Event
-    const stopDecodeEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'decode' });
-    const { eventType, decoded } = await withIndexerSpan(
-      'indexer.event.decode',
-      { 'ledger.sequence': event.ledgerSequence },
-      async () => decodeEvent(event.topics, event.data),
-    );
-    stopDecodeEventTimer();
-    indexerPipelineStageProcessedTotal.inc({ stage: 'decode', status: 'success' });
-
-    const positionKey = event.pagingToken || `${event.ledgerSequence}-${events.indexOf(event)}`;
+    const positionKey = event.pagingToken || `${event.ledgerSequence}-${eventIndex}`;
     const legacyEventId = `${event.transactionHash}-${positionKey}`;
     const eventId =
       legacyEventNetworks.get(legacyEventId) === network
         ? legacyEventId
         : `${network}-${legacyEventId}`;
+
+    // Decode & Persist Event. Malformed XDR is an item-level fault, not a
+    // ledger-level fault: persist operational context, send it to the DLQ,
+    // and continue with the next event in this range.
+    const stopDecodeEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'decode' });
+    let decodedEvent: ReturnType<typeof decodeEventStrict>;
+    try {
+      decodedEvent = await withIndexerSpan(
+        'indexer.event.decode',
+        { 'ledger.sequence': event.ledgerSequence },
+        async () => decodeEventStrict(event.topics, event.data),
+      );
+      indexerPipelineStageProcessedTotal.inc({ stage: 'decode', status: 'success' });
+    } catch (cause) {
+      const error = new Error(
+        `Malformed event XDR for ${eventId}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+      await recordLedgerDecodeError({
+        network,
+        eventId,
+        ledger: event.ledgerSequence,
+        transactionHash: event.transactionHash,
+        eventIndex,
+        topics: event.topics,
+        data: event.data,
+        error,
+      });
+      await enqueueFailure({
+        itemType: 'event',
+        itemId: eventId,
+        ledger: event.ledgerSequence,
+        rawXdr: JSON.stringify({ topics: event.topics, data: event.data }),
+        error,
+        context: { network, eventIndex, transactionHash: event.transactionHash },
+      });
+      logger.error('[indexer] isolated malformed event', {
+        network,
+        ledger: event.ledgerSequence,
+        eventId,
+        error: error.message,
+      });
+      indexerPipelineStageProcessedTotal.inc({ stage: 'decode', status: 'error' });
+      continue;
+    } finally {
+      stopDecodeEventTimer();
+    }
+    const { eventType, decoded } = decodedEvent;
 
     const stopPersistEventTimer = indexerPipelineStageDuration.startTimer({ stage: 'persist' });
     const savedEvent = await withIndexerSpan(
