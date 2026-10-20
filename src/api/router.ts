@@ -311,8 +311,11 @@ router.use('/graph', graphRouter);
 // ABI management and advanced event filtering for Soroban contracts.
 import { abiRouter } from './abi';
 import { advancedEventsRouter } from './advanced-events';
+import { abiMarketplaceRouter } from './abi-marketplace';
 router.use('/abi', abiRouter);
 router.use('/events/advanced', advancedEventsRouter);
+router.use('/abi-marketplace', abiMarketplaceRouter);
+
 
 // ── Factory Tracker & Upgrade Trace (#844) ────────────────────────────────────
 // Contract factory patterns and wasm upgrade history.

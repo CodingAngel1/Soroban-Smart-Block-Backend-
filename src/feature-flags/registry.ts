@@ -57,6 +57,14 @@ export const FEATURE_FLAG_DEFINITIONS: FlagDefinition[] = [
     defaultEnabled: false,
   },
   {
+    key: 'abiMarketplace',
+    description:
+      'Community-driven ABI marketplace with on-chain simulation, reputation-weighted voting, escrow bounties, and interface discovery.',
+    envVar: 'ENABLE_ABI_MARKETPLACE',
+    defaultEnabled: true,
+  },
+
+  {
     key: 'privacyWs',
     description:
       'Privacy WebSocket broadcaster (/ws/v1/privacy and /ws/v1/privacy/alerts); streams privacy-protocol transactions and anomaly alerts.',
