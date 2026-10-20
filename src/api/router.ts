@@ -92,6 +92,7 @@ import { statusRouter } from './status';
 // ── Admin ─────────────────────────────────────────────────────────────────────
 import { adminErrorsRouter } from './admin/errors';
 import { deadLetterAdminRouter } from './admin/dead-letter';
+import { auditIntegrityAdminRouter } from './admin/audit-integrity';
 import { featureFlagsAdminRouter } from './feature-flags';
 // ── CSV Exports ───────────────────────────────────────────────────────────────
 import { requireApiKey, requireKeyTier } from '../middleware/apiKeyAuth';
@@ -200,6 +201,7 @@ router.use('/sac-trustlines', sacTrustlinesRouter);
 // ── Admin Dashboards ──────────────────────────────────────────────────────────
 router.use('/admin/errors', adminErrorsRouter);
 router.use('/admin/dead-letter', deadLetterAdminRouter);
+router.use('/admin/audit-integrity', auditIntegrityAdminRouter);
 router.use('/admin/feature-flags', featureFlagsAdminRouter);
 // ── Bridge Tracker ─────────────────────────────────────────────────────────────
 import { bridgeTrackerRouter } from './bridge-tracker';

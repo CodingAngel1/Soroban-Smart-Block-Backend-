@@ -3,9 +3,11 @@
  *
  * Public:
  *   GET  /api/v1/datasets                              — catalog with schema + freshness
+ *   GET  /api/v1/datasets/quality-scorecard            — per-network data-quality scorecard (#1246)
  *   GET  /api/v1/datasets/:dataset                     — dataset detail
  *   GET  /api/v1/datasets/:dataset/manifests           — published snapshots (newest first)
  *   GET  /api/v1/datasets/:dataset/manifests/latest    — latest snapshot manifest
+ *   GET  /api/v1/datasets/:dataset/manifests/:id/lineage — source ledgers / ETL jobs behind a snapshot (#1245)
  * Admin:
  *   POST /api/v1/datasets/:dataset/manifests           — publish a generated snapshot manifest
  *
@@ -18,6 +20,11 @@ import { Router, Request, Response } from 'express';
 import { createHash } from 'crypto';
 import { z } from 'zod';
 import { adminAuth } from '../middleware/adminAuth';
+import { config } from '../config';
+import { buildDatasetLineage } from '../analytics/lineage';
+import { listLineage } from '../analytics/data-quality/checks';
+import { buildQualityScorecard } from '../analytics/data-quality/scorecard';
+import { allProfiles } from '../profiles';
 
 export type DatasetId = 'transactions' | 'events' | 'contracts' | 'tokens';
 export type DatasetFormat = 'parquet' | 'csv';
@@ -73,9 +80,13 @@ export interface DatasetFile {
 export interface DatasetManifest {
   id: string;
   dataset: DatasetId;
+  /** Network the snapshot was indexed from (the deployment's network profile). */
+  network: string;
   schemaVersion: number;
   ledgerRange: { from: number; to: number };
   files: DatasetFile[];
+  /** ETL jobs (see `EtlLineageRecord`) that produced the files — lineage from source ledgers. */
+  etlJobIds: string[];
   totalRows: number;
   totalBytes: number;
   publishedAt: string;
@@ -263,6 +274,10 @@ const PublishSchema = z
       to: z.number().int().nonnegative(),
     }),
     files: z.array(FileSchema).min(1).max(1_000),
+    etlJobIds: z
+      .array(z.string().regex(/^[A-Za-z0-9_\-:.]{1,128}$/, 'Invalid ETL job id'))
+      .max(100)
+      .optional(),
   })
   .refine((b) => b.ledgerRange.to >= b.ledgerRange.from, 'ledgerRange.to must be >= from');
 
@@ -312,6 +327,20 @@ publicDatasetsRouter.get('/', (_req: Request, res: Response) => {
   res.json({ data: Object.values(DATASETS).map(describe) });
 });
 
+publicDatasetsRouter.get('/quality-scorecard', (req: Request, res: Response) => {
+  const network = req.query.network === undefined ? config.stellarNetwork : String(req.query.network);
+  if (!Object.prototype.hasOwnProperty.call(allProfiles, network)) {
+    res.status(400).json({ error: `Unknown network. Valid values: ${Object.keys(allProfiles).join(', ')}` });
+    return;
+  }
+  const limit = req.query.limit === undefined ? 100 : Number(req.query.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+    res.status(400).json({ error: 'limit must be an integer between 1 and 500' });
+    return;
+  }
+  res.json(buildQualityScorecard(listLineage(limit), network));
+});
+
 publicDatasetsRouter.get('/:dataset', (req: Request, res: Response) => {
   const def = getDataset(req, res);
   if (def) res.json(describe(def));
@@ -334,6 +363,17 @@ publicDatasetsRouter.get('/:dataset/manifests/latest', (req: Request, res: Respo
     return;
   }
   res.json(latest);
+});
+
+publicDatasetsRouter.get('/:dataset/manifests/:id/lineage', (req: Request, res: Response) => {
+  const def = getDataset(req, res);
+  if (!def) return;
+  const manifest = manifests.get(def.id)?.find((m) => m.id === req.params.id);
+  if (!manifest) {
+    res.status(404).json({ error: 'Manifest not found' });
+    return;
+  }
+  res.json(buildDatasetLineage(manifest));
 });
 
 publicDatasetsRouter.post('/:dataset/manifests', adminAuth, (req: Request, res: Response) => {
@@ -370,12 +410,14 @@ publicDatasetsRouter.post('/:dataset/manifests', adminAuth, (req: Request, res: 
       .digest('hex')
       .slice(0, 16),
     dataset: def.id,
+    network: config.stellarNetwork,
     schemaVersion: SCHEMA_VERSION,
     ledgerRange: {
       from: parsed.data.ledgerRange.from,
       to: parsed.data.ledgerRange.to,
     },
     files,
+    etlJobIds: [...new Set(parsed.data.etlJobIds ?? [])],
     totalRows: files.reduce((s, f) => s + f.rows, 0),
     totalBytes: files.reduce((s, f) => s + f.bytes, 0),
     publishedAt,
