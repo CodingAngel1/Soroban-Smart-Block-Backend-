@@ -15,6 +15,7 @@ import { Request, Response, NextFunction } from 'express';
 import { logger } from '../logger';
 import { config } from '../config';
 import { httpErrorsTotal } from '../metrics';
+import { normaliseRouteLabel } from '../lib/metric-labels';
 import {
   type ErrorCode,
   type StructuredErrorResponse,
@@ -121,15 +122,6 @@ function shouldLogError(code: string): boolean {
   return false;
 }
 
-/* ─── Helper: normalise route for metrics labels ─────────────────────────── */
-
-function normaliseRoute(path: string): string {
-  return path
-    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '/:id')
-    .replace(/\/c[a-z0-9]{20,}/g, '/:id')
-    .replace(/\/\d+/g, '/:id');
-}
-
 /* ─── Main error handler ─────────────────────────────────────────────────── */
 
 export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
@@ -219,7 +211,7 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
     error: redactSensitiveText(err.message),
     method: req.method,
     endpoint: req.path,
-    route: normaliseRoute(req.path),
+    route: normaliseRouteLabel(req.path),
     durationMs,
     userAgent: req.headers['user-agent'],
     ip: (req.ip ?? req.socket?.remoteAddress ?? '').replace('::ffff:', ''),
@@ -261,7 +253,7 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
   httpErrorsTotal.inc({
     code,
     severity: classification.severity,
-    route: normaliseRoute(req.path),
+    route: normaliseRouteLabel(req.path),
   });
 
   // Send response
