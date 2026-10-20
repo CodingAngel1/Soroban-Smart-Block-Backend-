@@ -81,7 +81,11 @@
     "sdk:test:chaos": "vitest run tests/sdk-chaos.test.ts",
     "sdk:test:load": "vitest run tests/sdk-load.test.ts",
     "sdk:bench": "vitest run src/benchmarks/sdk-generation.bench.ts",
-    "sdk:audit:security": "ts-node --transpile-only scripts/sdk/security-audit.ts"
+    "sdk:audit:security": "ts-node --transpile-only scripts/sdk/security-audit.ts",
+    "sdk:cache:clean": "ts-node --transpile-only scripts/sdk/cache.ts --clean",
+    "sandbox:wasmtime:verify": "ts-node --transpile-only scripts/verify-wasmtime-addon.ts",
+    "sandbox:calibrate": "ts-node --transpile-only scripts/sandbox/calibrate-fuel.ts",
+    "sandbox:calibrate:check": "ts-node --transpile-only scripts/sandbox/calibrate-fuel.ts --check --threshold 5.0"
   },
   "overrides": {
     "@libp2p/interface": "2.11.0"
