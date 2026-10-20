@@ -322,7 +322,7 @@ export async function processLedgerRange(
   start: number,
   end: number,
   opts: { force?: boolean } = {},
-): Promise<void> {
+): Promise<IndexedLedgerRange> {
   return withIndexerSpan(
     'indexer.ledger_range',
     { 'ledger.range.start': start, 'ledger.range.end': end },
@@ -515,6 +515,9 @@ async function processLedgerRangeInternal(
   const legacyEventNetworks = new Map(
     existingLegacyEvents.map((event) => [event.id, event.network]),
   );
+  const indexedLedgerSequences = new Set(responsibleSeqs);
+  const indexedTransactionHashes = new Set<string>();
+  const indexedEventIds = new Set<string>();
 
   // Contracts recur across every event in the range — index each address once
   // per processed range rather than once per event.
@@ -670,10 +673,12 @@ async function processLedgerRangeInternal(
 
     const positionKey = event.pagingToken || `${event.ledgerSequence}-${eventIndex}`;
     const legacyEventId = `${event.transactionHash}-${positionKey}`;
-    const eventId =
-      legacyEventNetworks.get(legacyEventId) === network
-        ? legacyEventId
-        : `${network}-${legacyEventId}`;
+    const eventId = eventPersistenceId(
+      network,
+      event.transactionHash,
+      positionKey,
+      legacyEventNetworks.get(legacyEventId),
+    );
 
     // Decode & Persist Event. Malformed XDR is an item-level fault, not a
     // ledger-level fault: persist operational context, send it to the DLQ,
@@ -745,6 +750,7 @@ async function processLedgerRangeInternal(
     );
     stopPersistEventTimer();
     indexerPipelineStageProcessedTotal.inc({ stage: 'persist', status: 'success' });
+    indexedEventIds.add(eventId);
 
     // Search Stage: index the decoded event for discovery
     await indexSafely('event', () => indexEvent(savedEvent));
