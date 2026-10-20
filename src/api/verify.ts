@@ -261,7 +261,7 @@ async function fetchOnChainHash(contractAddress: string): Promise<string> {
 
   const entry = resp.entries[0];
   // The Wasm hash is stored in the contract instance ledger entry
-  const wasmHash = (entry.val as any)?.contract_code?.hash;
+  const wasmHash = (entry.val as Record<string, unknown>)?.contract_code?.hash;
   if (!wasmHash) throw new Error('Could not extract Wasm hash from ledger entry');
 
   return Buffer.from(wasmHash).toString('hex');
